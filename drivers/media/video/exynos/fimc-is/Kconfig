@@ -1,0 +1,21 @@
+config VIDEO_EXYNOS_FIMC_IS
+	bool "Exynos FIMC-IS (Image Subsystem) driver"
+	depends on VIDEO_EXYNOS && !SOC_EXYNOS5410 && !SOC_EXYNOS5420
+	select MEDIA_EXYNOS
+	select USE_VENDER_FEATURE
+	default n
+	help
+	  This is a v4l2 driver for exynos FIMC-IS device.
+
+config CAMERA_EEPROM_SUPPORT
+	bool "Exynos FIMC-IS EEPROM SUPPORT"
+	depends on VIDEO_EXYNOS_FIMC_IS
+	default n
+	help
+	  This is a v4l2 driver for exynos FIMC-IS device.
+
+config USE_VENDER_FEATURE
+	bool "Use vender specific features"
+	default n
+	help
+	  Enable to use the vender.
