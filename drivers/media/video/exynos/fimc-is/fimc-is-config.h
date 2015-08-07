@@ -168,6 +168,10 @@
 #define GET_3AA_ID(video) ((video->id < 14) ? 0 : 1)
 #define GET_3AAC_ID(video) ((video->id < FIMC_IS_VIDEO_3A1_NUM) ? 0 : 1)
 
+/* sync log with HAL, FW */
+#define log_sync(sync_id) \
+	pr_info("[@]FIMC_IS_SYNC %d\n", sync_id)
+
 #ifdef err
 #undef err
 #endif
