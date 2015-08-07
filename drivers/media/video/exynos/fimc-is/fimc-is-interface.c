@@ -605,6 +605,8 @@ static int fimc_is_set_cmd_nblk(struct fimc_is_interface *this,
 	case HIC_SET_CAM_CONTROL:
 		set_req_work(&this->nblk_cam_ctrl, work);
 		break;
+	case HIC_MSG_TEST:
+		break;
 	default:
 		err("unresolved command\n");
 		break;
@@ -2521,6 +2523,29 @@ int fimc_is_hw_memdump(struct fimc_is_interface *this,
 	ret = (u32)cur - end;
 
 p_err:
+	return ret;
+}
+
+int fimc_is_hw_msg_test(struct fimc_is_interface *this, u32 sync_id, u32 msg_test_id)
+{
+	int ret = 0;
+	struct fimc_is_work work;
+	struct fimc_is_msg *msg;
+
+	dbg_interface("msg_test_nblk(%d)\n", msg_test_id);
+
+	msg = &work.msg;
+	msg->id = 0;
+	msg->command = HIC_MSG_TEST;
+	msg->instance = 0;
+	msg->group = 0;
+	msg->parameter1 = msg_test_id;
+	msg->parameter2 = sync_id;
+	msg->parameter3 = 0;
+	msg->parameter4 = 0;
+
+	ret = fimc_is_set_cmd_nblk(this, &work);
+
 	return ret;
 }
 
