@@ -97,6 +97,7 @@
 	@brief ADPD142 Platform Data
 */
 struct adpd_platform_data {
+	void (*adpd142_power)(bool);
 	unsigned short config_size;
 	unsigned int config_data[MAX_CONFIG_REG_CNT];
 };

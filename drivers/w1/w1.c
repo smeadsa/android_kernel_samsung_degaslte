@@ -34,6 +34,7 @@
 #include <linux/freezer.h>
 
 #include <linux/atomic.h>
+#include <linux/input.h>
 
 #include "w1.h"
 #include "w1_log.h"
@@ -56,7 +57,11 @@ int w1_max_slave_ttl = 1;
 
 static struct w1_master *master_dev = NULL;
 extern int w1_ds28el15_verifymac(struct w1_slave *sl);
-extern int id, color;
+extern int verification, id, color;
+extern char g_sn[14];
+#ifdef CONFIG_W1_CF
+extern int cf_node;
+#endif	/* CONFIG_W1_CF */
 #else
 static int w1_timeout = 10;
 int w1_max_slave_count = 10;
@@ -97,6 +102,12 @@ static void w1_slave_release(struct device *dev)
 
 	dev_dbg(dev, "%s: Releasing %s.\n", __func__, sl->name);
 	printk(KERN_ERR "%s: Releasing %s.\n", __func__, sl->name);
+
+	/* add for sending uevent */
+	pr_info("%s: uevent send 0\n", __func__);
+	input_report_switch(sl->master->bus_master->input, SW_W1, 0);
+	input_sync(sl->master->bus_master->input);
+	/* add for sending uevent */
 
 	while (atomic_read(&sl->refcnt)) {
 		dev_dbg(dev, "Waiting for %s to become free: refcnt=%d.\n",
@@ -436,14 +447,27 @@ static int w1_atoreg_num(struct device *dev, const char *buf, size_t count,
 /* Searches the slaves in the w1_master and returns a pointer or NULL.
  * Note: must hold the mutex
  */
+extern bool w1_is_suspended;
+
 static struct w1_slave *w1_slave_search_device(struct w1_master *dev,
 	struct w1_reg_num *rn)
 {
-	struct w1_slave *sl;
+	struct w1_slave *sl = NULL;
 	list_for_each_entry(sl, &dev->slist, w1_slave_entry) {
-		if (sl->reg_num.family == rn->family &&
-				sl->reg_num.id == rn->id &&
-				sl->reg_num.crc == rn->crc) {
+		if (w1_is_suspended) {
+			pr_info("%s: is_suspended true\n", __func__);
+			w1_is_suspended = false;
+
+			if (sl->reg_num.family == rn->family &&
+					sl->reg_num.id == rn->id &&
+					sl->reg_num.crc == rn->crc) {
+				return sl;
+			} else {
+				w1_slave_detach(sl);
+				return NULL;
+			}
+		} else {
+			pr_info("%s: is_suspended false\n", __func__);
 			return sl;
 		}
 	}
@@ -516,40 +540,58 @@ static ssize_t w1_master_attribute_store_remove(struct device *dev,
 
 static ssize_t w1_master_attribute_show_verify_mac(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	struct w1_master *md = dev_to_w1_master(dev);
 	int result = -1;
-	struct list_head *ent, *n;
-	struct w1_slave *sl = NULL;
 
-	pr_info("COVER ACT 1 %s\n", __func__);
+	struct w1_master *md = dev_to_w1_master(dev);
 
-	w1_master_search();
+#if defined(CONFIG_W1_WORKQUEUE)
+	cancel_delayed_work_sync(&w1_gdev->w1_dwork);
 
-	list_for_each_safe(ent, n, &md->slist)
-		sl = list_entry(ent, struct w1_slave, w1_slave_entry);
+	schedule_delayed_work(&w1_gdev->w1_dwork, 0);
 
-	/* verify mac */
-	if (sl)
-		result = w1_ds28el15_verifymac(sl);
+	msleep(10);
+#endif /* W1_WORKQUEUE */
+
+	if (md->slave_count > 0)
+		result = 0;
 	else
-		pr_info("%s : sysfs call fail\n", __func__);
+		result = -1;
+
+	pr_info("COVER ACT 1 %s %d\n", __func__, result);
 
 	return sprintf(buf, "%d\n", result);
 }
 
+#ifdef CONFIG_W1_CF
+static ssize_t w1_master_attribute_show_cf(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	pr_info("%s: cf_node = %d\n", __func__, cf_node);
+	return sprintf(buf, "%d\n", cf_node);
+}
+#endif	/* CONFIG_W1_CF */
+
 static ssize_t w1_master_attribute_show_check_id(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	pr_info("COVER ACT 2 %s\n", __func__);
+	pr_info("COVER ACT 2 %s %d\n", __func__, id);
 	return sprintf(buf, "%d\n", id);
 }
 
 static ssize_t w1_master_attribute_show_check_color(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	pr_info("COVER ACT 2 %s\n", __func__);
+	pr_info("COVER ACT 2 %s %d\n", __func__, color);
 	return sprintf(buf, "%d\n", color);
 }
-/* need to add */
 
+static ssize_t w1_master_attribute_show_check_sn(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	pr_info("COVER ACT 3 %s\n", __func__);
+
+	if (g_sn[0])
+		return snprintf(buf, 15, "%s\n", g_sn);
+	else
+		return snprintf(buf, 1, "%s", "");
+}
+/* need to add */
 
 #define W1_MASTER_ATTR_RO(_name, _mode)				\
 	struct device_attribute w1_master_attribute_##_name =	\
@@ -574,8 +616,12 @@ static W1_MASTER_ATTR_RW(pullup, S_IRUGO | S_IWUSR | S_IWGRP);
 static W1_MASTER_ATTR_RW(add, S_IRUGO | S_IWUSR | S_IWGRP);
 static W1_MASTER_ATTR_RW(remove, S_IRUGO | S_IWUSR | S_IWGRP);
 static W1_MASTER_ATTR_RO(verify_mac, S_IRUGO);
+#ifdef CONFIG_W1_CF
+static W1_MASTER_ATTR_RO(cf, S_IRUGO);
+#endif	/* CONFIG_W1_CF */
 static W1_MASTER_ATTR_RO(check_id, S_IRUGO);
 static W1_MASTER_ATTR_RO(check_color, S_IRUGO);
+static W1_MASTER_ATTR_RO(check_sn, S_IRUGO);
 
 static struct attribute *w1_master_default_attrs[] = {
 	&w1_master_attribute_name.attr,
@@ -590,8 +636,12 @@ static struct attribute *w1_master_default_attrs[] = {
 	&w1_master_attribute_add.attr,
 	&w1_master_attribute_remove.attr,
 	&w1_master_attribute_verify_mac.attr,
+#ifdef CONFIG_W1_CF
+	&w1_master_attribute_cf.attr,
+#endif	/* CONFIG_W1_CF */
 	&w1_master_attribute_check_id.attr,
 	&w1_master_attribute_check_color.attr,
+	&w1_master_attribute_check_sn.attr,
 	NULL
 };
 
@@ -615,7 +665,7 @@ static int w1_uevent(struct device *dev, struct kobj_uevent_env *env)
 	struct w1_master *md = NULL;
 	struct w1_slave *sl = NULL;
 	char *event_owner, *name;
-	int err;
+	int err = 0;
 
 	if (dev->driver == &w1_master_driver) {
 		md = container_of(dev, struct w1_master, dev);
@@ -638,19 +688,17 @@ static int w1_uevent(struct device *dev, struct kobj_uevent_env *env)
 			event_owner, name, dev_name(dev));
 
 	if (dev->driver != &w1_slave_driver || !sl)
-		return 0;
+		goto end;
 
 	err = add_uevent_var(env, "W1_FID=%02X", sl->reg_num.family);
 	if (err)
-		return err;
+		goto end;
 
 	err = add_uevent_var(env, "W1_SLAVE_ID=%024LX",
 			     (unsigned long long)sl->reg_num.id);
-	if (err)
+end:
 		return err;
-
-	return 0;
-};
+}
 #else
 static int w1_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
@@ -661,15 +709,9 @@ static int w1_uevent(struct device *dev, struct kobj_uevent_env *env)
 #ifdef CONFIG_W1_SLAVE_DS28EL15
 static void w1_search_process(struct w1_master *dev, u8 search_type);
 
-int w1_master_search(void)
+void w1_master_search(void)
 {
-	struct w1_slave *sl, *sln;
-
 	w1_search_process(master_dev, W1_SEARCH);
-	list_for_each_entry_safe(sl, sln, &master_dev->slist, w1_slave_entry) {
-		if(!sl->verified)return 0;
-	}
-	return -1;
 }
 #endif
 
@@ -755,7 +797,6 @@ static int w1_attach_slave_device(struct w1_master *dev, struct w1_reg_num *rn)
 			 __func__);
 		return -ENOMEM;
 	}
-
 
 	sl->owner = THIS_MODULE;
 	sl->master = dev;
@@ -968,16 +1009,21 @@ void w1_search(struct w1_master *dev, u8 search_type, w1_slave_found_callback cb
 		 *
 		 * Return 0 - device(s) present, 1 - no devices present.
 		 */
+		mutex_lock(&dev->bus_mutex);
 		if (w1_reset_bus(dev)) {
+			mutex_unlock(&dev->bus_mutex);
 			dev_dbg(&dev->dev, "No devices present on the wire.\n");
 			break;
 		}
 
 		/* Do fast search on single slave bus */
 		if (dev->max_slave_count == 1) {
+			int rv;
 			w1_write_8(dev, W1_READ_ROM);
+			rv = w1_read_block(dev, (u8 *)&rn, 8);
+			mutex_unlock(&dev->bus_mutex);
 
-			if (w1_read_block(dev, (u8 *)&rn, 8) == 8 && rn)
+			if (rv == 8 && rn)
 				cb(dev, rn);
 
 			break;
@@ -998,8 +1044,10 @@ void w1_search(struct w1_master *dev, u8 search_type, w1_slave_found_callback cb
 			triplet_ret = w1_triplet(dev, search_bit);
 
 			/* quit if no device responded */
-			if ( (triplet_ret & 0x03) == 0x03 )
+			if ( (triplet_ret & 0x03) == 0x03 ) {
+				pr_info("%s: quit if no device responded\n", __func__);
 				break;
+			}
 
 			/* If both directions were valid, and we took the 0 path... */
 			if (triplet_ret == 0)
@@ -1009,11 +1057,14 @@ void w1_search(struct w1_master *dev, u8 search_type, w1_slave_found_callback cb
 			tmp64 = (triplet_ret >> 2);
 			rn |= (tmp64 << i);
 
-			if (kthread_should_stop()) {
+			/* ensure we're called from kthread and not by netlink callback */
+			if (!dev->priv && kthread_should_stop()) {
+				mutex_unlock(&dev->bus_mutex);
 				dev_dbg(&dev->dev, "Abort w1_search\n");
 				return;
 			}
 		}
+		mutex_unlock(&dev->bus_mutex);
 
 		if ( (triplet_ret & 0x03) != 0x03 ) {
 			if ( (desc_bit == last_zero) || (last_zero < 0))
@@ -1083,6 +1134,22 @@ int w1_process(void *data)
 	return 0;
 }
 
+#ifdef CONFIG_W1_WORKQUEUE
+void w1_work(struct work_struct *work)
+{
+	struct w1_master *dev =
+		container_of(work, struct w1_master, w1_dwork.work);
+
+	if (dev->search_count) {
+		mutex_lock(&dev->mutex);
+		w1_search_process(dev, W1_SEARCH);
+		mutex_unlock(&dev->mutex);
+	}
+
+	schedule_delayed_work(&dev->w1_dwork, HZ * 2);
+}
+#endif
+
 static int __init w1_init(void)
 {
 	int retval;
@@ -1108,7 +1175,7 @@ static int __init w1_init(void)
 	retval = driver_register(&w1_slave_driver);
 	if (retval) {
 		printk(KERN_ERR
-			"Failed to register master driver. err=%d.\n",
+			"Failed to register slave driver. err=%d.\n",
 			retval);
 		goto err_out_master_unregister;
 	}
@@ -1146,5 +1213,5 @@ static void __exit w1_fini(void)
 	bus_unregister(&w1_bus_type);
 }
 
-module_init(w1_init);
+late_initcall(w1_init);
 module_exit(w1_fini);

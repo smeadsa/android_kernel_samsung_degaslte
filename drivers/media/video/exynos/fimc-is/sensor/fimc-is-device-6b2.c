@@ -546,8 +546,10 @@ int sensor_6b2_probe(struct i2c_client *client,
 	struct fimc_is_module_enum *module;
 	struct fimc_is_device_sensor *device;
 	struct sensor_open_extended *ext;
+	static bool probe_retried = false;
 
-	BUG_ON(!fimc_is_dev);
+	if (!fimc_is_dev)
+		goto probe_defer;
 
 	core = (struct fimc_is_core *)dev_get_drvdata(fimc_is_dev);
 	if (!core) {
@@ -587,6 +589,7 @@ int sensor_6b2_probe(struct i2c_client *client,
 	if (!module->private_data) {
 		err("private_data is NULL");
 		ret = -ENOMEM;
+		kfree(subdev_module);
 		goto p_err;
 	}
 
@@ -603,12 +606,13 @@ int sensor_6b2_probe(struct i2c_client *client,
 
 	ext->companion_con.product_name = COMPANION_NAME_NOTHING;
 
-#ifdef SENSOR_S5K6B2_DRIVING
-	v4l2_i2c_subdev_init(subdev_module, client, &subdev_ops);
-	subdev_module->internal_ops = &internal_ops;
-#else
-	v4l2_subdev_init(subdev_module, &subdev_ops);
-#endif
+	if (client) {
+		v4l2_i2c_subdev_init(subdev_module, client, &subdev_ops);
+		subdev_module->internal_ops = &internal_ops;
+	} else {
+		v4l2_subdev_init(subdev_module, &subdev_ops);
+	}
+
 	v4l2_set_subdevdata(subdev_module, module);
 	v4l2_set_subdev_hostdata(subdev_module, device);
 	snprintf(subdev_module->name, V4L2_SUBDEV_NAME_SIZE, "sensor-subdev.%d", module->id);
@@ -616,6 +620,16 @@ int sensor_6b2_probe(struct i2c_client *client,
 p_err:
 	info("%s(%d)\n", __func__, ret);
 	return ret;
+
+probe_defer:
+	if (probe_retried) {
+		err("probe has already been retried!!");
+		BUG();
+	}
+
+	probe_retried = true;
+	err("core device is not yet probed");
+	return -EPROBE_DEFER;
 }
 
 static int sensor_6b2_remove(struct i2c_client *client)

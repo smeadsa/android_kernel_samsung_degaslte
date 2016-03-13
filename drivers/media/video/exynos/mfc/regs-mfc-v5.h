@@ -215,7 +215,8 @@
 #define S5P_FIMV_DEC_VERT_NB_MV_SIZE		(16 * 1024)
 #define S5P_FIMV_DEC_NB_DCAC_SIZE		(16 * 1024)
 #define S5P_FIMV_DEC_UPNB_MV_SIZE		(68 * 1024)
-#define S5P_FIMV_DEC_SUB_ANCHOR_MV_SIZE		(136 * 1024)
+#define S5P_FIMV_DEC_SUB_ANCHOR_MV_SIZE_VC1	(136 * 1024)
+#define S5P_FIMV_DEC_SUB_ANCHOR_MV_SIZE		(240 * 1024)
 #define S5P_FIMV_DEC_OVERLAP_TRANSFORM_SIZE     (32 * 1024)
 #define S5P_FIMV_DEC_VC1_BITPLANE_SIZE		(2 * 1024)
 #define S5P_FIMV_DEC_STX_PARSER_SIZE		(68 * 1024)
@@ -402,6 +403,9 @@ static inline unsigned int r2h_bits(int cmd)
 #define S5P_FIMV_ERR_FRAME_CONCEAL		-1
 #define S5P_FIMV_R2H_CMD_DPB_FLUSH_RET		-2
 #define S5P_FIMV_R2H_CMD_COMPLETE_SEQ_RET	-3
+
+/* for compatibility */	
+#define S5P_FIMV_E_GOP_CONFIG2			0x205C
 
 /* Error handling defines */
 #define S5P_FIMV_ERR_WARNINGS_START		145

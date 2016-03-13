@@ -30,6 +30,10 @@ struct abov_touchkey_platform_data {
 	void (*input_event) (void *data);
 	int (*power) (bool on);
 	int (*keyled) (bool on);
+	const char *fw_name;
+	u8 fw_version;
+	u8 checksum_h;
+	u8 checksum_l;
 };
 
 #endif /* LINUX_ABOV_TOUCHKEY_H */

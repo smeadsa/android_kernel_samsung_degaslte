@@ -34,14 +34,6 @@
 #include <linux/input/input_booster.h>
 #endif
 
-#if defined(CONFIG_SEC_FACTORY)
-#define CONFIG_W1_KTHREAD
-#endif
-
-#if !defined(CONFIG_W1_KTHREAD)
-extern int w1_master_search(void);
-#endif
-
 struct gpio_button_data {
 	struct gpio_keys_button *button;
 	struct input_dev *input;
@@ -84,29 +76,6 @@ struct gpio_keys_drvdata {
 	struct gpio_button_data data[0];
 };
 
-#if !defined(CONFIG_SEC_FACTORY)
-#ifdef CONFIG_W1_SLAVE_DS28EL15
-static int check_verification_status(void);
-
-static int check_verification_status(void)
-{
-	int try_count = 10;
-#if !defined(CONFIG_W1_KTHREAD)
-	/* one more chance to verify */
-	while(try_count) {
-		if (!w1_master_search()) {
-			printk("%s : Verified try_count = %d \n",__func__,try_count);
-			return 0;
-		}
-		try_count --;
-		msleep(10);
-	}
-#endif
-	printk("%s : Failed try_count = %d \n",__func__,try_count);
-	return -1;
-}
-#endif
-#endif
 
 /*
  * SYSFS interface for enabling/disabling keys and switches:
@@ -563,12 +532,12 @@ static int gpio_key_init_dvfs(struct gpio_button_data *bdata)
 }
 #endif
 
-static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
+static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata,
+				bool force)
 {
 	const struct gpio_keys_button *button = bdata->button;
 	struct input_dev *input = bdata->input;
 	unsigned int type = button->type ?: EV_KEY;
-	struct irq_desc *desc = irq_to_desc(gpio_to_irq(button->gpio));
 	int state = (gpio_get_value_cansleep(button->gpio) ? 1 : 0) ^ button->active_low;
 
 	pr_info("gpio-keys : code[%d], type[%d], state[%d]\n",
@@ -583,7 +552,7 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 		int report_state;
 		static int prev_state;
 
-		if (bdata->wakeup && !state) {
+		if (bdata->wakeup && !state && !force) {
 			input_event(input, type, button->code, !state);
 			input_sync(input);
 #if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
@@ -598,7 +567,7 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 		bdata->key_state = !!state;
 		bdata->wakeup = false;
 
-		report_state = irqd_is_wakeup_set(&desc->irq_data) ? 1 : !!state;
+		report_state = !!state;
 #if !defined(CONFIG_SAMSUNG_PRODUCT_SHIP)
 		printk(KERN_DEBUG"keys:code %d, state %d\n",
 			button->code, report_state);
@@ -626,7 +595,7 @@ static void gpio_keys_gpio_work_func(struct work_struct *work)
 	struct gpio_button_data *bdata =
 		container_of(work, struct gpio_button_data, work);
 
-	gpio_keys_gpio_report_event(bdata);
+	gpio_keys_gpio_report_event(bdata, false);
 }
 
 static void gpio_keys_gpio_timer(unsigned long _data)
@@ -825,22 +794,18 @@ static void flip_cover_work(struct work_struct *work)
 
 	first = gpio_get_value(ddata->gpio_flip_cover);
 
-	printk(KERN_DEBUG "keys:%s #1 : %d\n",
+	printk("keys:%s #1 : %d\n",
 		__func__, first);
 
 	msleep(50);
 
 	second = gpio_get_value(ddata->gpio_flip_cover);
 
-#ifdef CONFIG_W1_SLAVE_DS28EL15
-	printk(KERN_DEBUG "[keys] %s : %d, Verification(%d)\n",
-		__func__, ddata->flip_cover, verification);
-#else
-	printk(KERN_DEBUG "keys:%s #2 : %d\n",
+	printk("keys:%s #2 : %d\n",
 		__func__, second);
-#endif
 
-	if(first == second && ddata->flip_cover != first) {
+
+	if(first == second) {
 		ddata->flip_cover = first;
 		input_report_switch(ddata->input,
 			SW_FLIP, ddata->flip_cover);
@@ -850,32 +815,20 @@ static void flip_cover_work(struct work_struct *work)
 #else
 static void flip_cover_work(struct work_struct *work)
 {
-	bool first;
+	int gpio_flip_cover;
 	struct gpio_keys_drvdata *ddata =
 		container_of(work, struct gpio_keys_drvdata,
 				flip_cover_dwork.work);
 
-	first = gpio_get_value(ddata->gpio_flip_cover);
+	gpio_flip_cover = gpio_get_value(ddata->gpio_flip_cover);
 
-#ifdef CONFIG_W1_SLAVE_DS28EL15
-	printk(KERN_DEBUG "[keys] %s : %d, gpio_flip_cover(%d)\n",
-		__func__, ddata->flip_cover, first);
+	printk("keys:%s #1 : %d\n",
+		__func__, gpio_flip_cover);
 
-	/* check verification status only when closing s-cover */
-	if(!first)
-		if(check_verification_status())
-			return;
-#else
-	printk(KERN_DEBUG "keys:%s #1 : %d\n",
-		__func__, first);
-#endif
-
-	if(ddata->flip_cover != first) {
-		ddata->flip_cover = first;
-		input_report_switch(ddata->input,
-			SW_FLIP, ddata->flip_cover);
-		input_sync(ddata->input);
-	}
+	ddata->flip_cover = gpio_flip_cover;
+	input_report_switch(ddata->input,
+	SW_FLIP, ddata->flip_cover);
+	input_sync(ddata->input);
 }
 #endif
 
@@ -1124,7 +1077,7 @@ static int __devinit gpio_keys_probe(struct platform_device *pdev)
 #ifdef CONFIG_SENSORS_HALL
 	ddata->gpio_flip_cover = pdata->gpio_flip_cover;
 	ddata->irq_flip_cover = gpio_to_irq(ddata->gpio_flip_cover);;
-
+	ddata->flip_cover= 1;
 	wake_lock_init(&ddata->flip_wake_lock, WAKE_LOCK_SUSPEND,
 		"flip wake lock");
 #endif
@@ -1205,7 +1158,7 @@ static int __devinit gpio_keys_probe(struct platform_device *pdev)
 
 	/* get current state of buttons */
 	for (i = 0; i < pdata->nbuttons; i++)
-		gpio_keys_gpio_report_event(&ddata->data[i]);
+		gpio_keys_gpio_report_event(&ddata->data[i], true);
 	input_sync(input);
 
 	device_init_wakeup(&pdev->dev, wakeup);
@@ -1273,8 +1226,10 @@ static int gpio_keys_suspend(struct device *dev)
 	if (device_may_wakeup(dev)) {
 		for (i = 0; i < ddata->n_buttons; i++) {
 			struct gpio_button_data *bdata = &ddata->data[i];
-			if (bdata->button->wakeup)
+			if (bdata->button->wakeup) {
 				enable_irq_wake(bdata->irq);
+				bdata->wakeup = true;
+			}
 		}
 #ifdef CONFIG_SENSORS_HALL
 		enable_irq_wake(ddata->irq_flip_cover);
@@ -1296,7 +1251,7 @@ static int gpio_keys_resume(struct device *dev)
 			disable_irq_wake(bdata->irq);
 
 		if (gpio_is_valid(bdata->button->gpio))
-			gpio_keys_gpio_report_event(bdata);
+			gpio_keys_gpio_report_event(bdata, true);
 	}
 	input_sync(ddata->input);
 #ifdef CONFIG_SENSORS_HALL

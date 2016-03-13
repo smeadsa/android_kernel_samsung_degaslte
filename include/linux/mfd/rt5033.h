@@ -39,7 +39,7 @@
 
 #include <linux/battery/sec_charging_common.h>
 
-#define RT5033_DRV_VER "1.1.1_S"
+#define RT5033_DRV_VER "1.1.8_S"
 
 #ifdef CONFIG_RT5033_SADDR
 #define RT5033FG_SLAVE_ADDR_MSB (0x40)
@@ -77,8 +77,7 @@ typedef union rt5033_irq_status {
     };
 } rt5033_irq_status_t;
 
-typedef union rt5033_pmic_shdn_ctrl
-{
+typedef union rt5033_pmic_shdn_ctrl {
     struct {
         uint8_t reserved : 2;
         uint8_t buck_ocp_enshdn : 1;
@@ -103,31 +102,37 @@ struct rt5033_fled_platform_data;
 typedef struct rt5033_charger_platform_data {
     sec_charging_current_t *charging_current_table;
     int chg_float_voltage;
+    char *charger_name;
+    uint32_t is_750kHz_switching : 1;
+    uint32_t is_fixed_switching : 1;
 } rt5033_charger_platform_data_t;
 
 struct rt5033_mfd_platform_data {
-	/*    const rt5033_chg_platform_data_t *chg_platform_data;*/
 	rt5033_regulator_platform_data_t *regulator_platform_data;
 	struct rt5033_fled_platform_data *fled_platform_data;
 	int irq_gpio;
 	int irq_base;
-
+#ifdef CONFIG_MFD_RT5033_EN_MRSTB
+	/* MRSTB function to reset charger */
+	int mrstb_gpio;
+#endif /* CONFIG_MFD_RT5033_EN_MRSTB */
 #ifdef CONFIG_CHARGER_RT5033
     rt5033_charger_platform_data_t *charger_platform_data;
 #endif
-
 };
 
 #define rt5033_mfd_platform_data_t \
 	struct rt5033_mfd_platform_data
 
-struct rt5033_mfd_chip
-{
+struct rt5033_charger_data;
+
+struct rt5033_mfd_chip {
 	struct i2c_client *i2c_client;
 	struct device *dev;
 	rt5033_mfd_platform_data_t *pdata;
     int irq_base;
 	struct mutex io_lock;
+	struct mutex regulator_lock;
     struct mutex irq_lock;
 	struct wake_lock irq_wake_lock;
 	/* prev IRQ status and now IRQ_status*/
@@ -137,14 +142,16 @@ struct rt5033_mfd_chip
 	int irq;
     uint8_t irq_masks_cache[RT5033_IRQ_REGS_NR];
 	int suspend_flag;
+	struct rt5033_charger_data *charger;
 
 #ifdef CONFIG_FLED_RT5033
 	struct rt5033_fled_info *fled_info;
 #endif
 #ifdef CONFIG_REGULATOR_RT5033
+	bool regulator_states[RT5033_MAX_REGULATOR];
 	struct rt5033_regulator_info *regulator_info[RT5033_MAX_REGULATOR];
 #endif
-
+	int rev_id;
 };
 
 #define rt5033_mfd_chip_t \
@@ -162,8 +169,16 @@ extern int rt5033_assign_bits(struct i2c_client *i2c, int reg_addr, unsigned cha
 		unsigned char data);
 extern int rt5033_set_bits(struct i2c_client *i2c, int reg_addr, unsigned char mask);
 extern int rt5033_clr_bits(struct i2c_client *i2c, int reg_addr, unsigned char mask);
+extern void rt5033_lock_regulator(struct i2c_client *i2c);
+extern void rt5033_unlock_regulator(struct i2c_client *i2c);
 
-extern int rt5033_read_irq_status(rt5033_mfd_chip_t *mfd_chip);
+#ifdef CONFIG_REGULATOR_RT5033
+extern void rt5033_set_regulator_state(struct i2c_client *i2c, int id, bool en);
+extern bool rt5033_get_pmic_state(struct i2c_client *i2c);
+#endif
+
+void rt5033_read_dump(struct i2c_client *i2c);
+void rt5033_workaround(rt5033_mfd_chip_t *chip);
 
 typedef enum {
         RT5033_PREV_STATUS = 0,

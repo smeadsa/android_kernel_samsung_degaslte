@@ -48,7 +48,7 @@ extern bool companion_coef_isvalid;
 static u16 companion_ver;
 static u32 concord_fw_size;
 char companion_crc[10];
-//#ifdef USE_SPI
+
 #if 1
 static int fimc_is_comp_spi_read(struct spi_device *spi,
 		void *buf, u16 rx_addr, size_t size)

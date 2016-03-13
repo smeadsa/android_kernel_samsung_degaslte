@@ -16,6 +16,8 @@
 #include <linux/gpio.h>
 #include <linux/delay.h>
 
+#include <linux/input.h>
+
 #include "../w1.h"
 #include "../w1_int.h"
 
@@ -91,6 +93,10 @@ static u8 w1_gpio_read_bit_val(void *data)
 	struct w1_gpio_platform_data *pdata = data;
 
 	ret = gpio_get_value(pdata->pin) ? 1 : 0;
+	if (ret) {
+		pr_err("%s: Unknown w1 gpio pin\n", __func__);
+		return -EINVAL;
+	}
 #else
 	tmp = __raw_readl(g_addr + 0x4);
 	ret = (tmp >> 3) & 0x1;
@@ -370,20 +376,51 @@ static int __init w1_gpio_probe(struct platform_device *pdev)
 {
 	struct w1_bus_master *master;
 	struct w1_gpio_platform_data *pdata = pdev->dev.platform_data;
-	int err;
+	struct input_dev *input;
+	int err =0;
 
+	pr_info("%s : start\n", __func__);
 	if (!pdata)
 		return -ENXIO;
 
 	master = kzalloc(sizeof(struct w1_bus_master), GFP_KERNEL);
 	if (!master)
-		return -ENOMEM;
+		goto free_pdata;
+
+	/* add for sending uevent */
+	input = input_allocate_device();
+	if (!input)
+		goto free_master;
+
+	master->input = input;
+
+	input_set_drvdata(input, master);
+
+	input->name = "w1";
+	input->phys = "w1";
+	input->dev.parent = &pdev->dev;
+
+		/* need to change */
+	input->evbit[0] |= BIT_MASK(EV_SW);
+	input_set_capability(input, EV_SW, SW_W1);
+
+//	input->open = hall_open;
+//	input->close = hall_close;
+		/* need to change */
+
+	/* Enable auto repeat feature of Linux input subsystem */
+	__set_bit(EV_REP, input->evbit);
+
+	err = input_register_device(input);
+	if (err)
+		goto free_input;
+	/* add for sending uevent */
 
 	spin_lock_init(&w1_gpio_lock);
 
 	err = gpio_request(pdata->pin, "w1");
 	if (err)
-		goto free_master;
+		goto free_input;
 
 	if (gpio_is_valid(pdata->ext_pullup_enable_pin)) {
 		err = gpio_request_one(pdata->ext_pullup_enable_pin,
@@ -437,8 +474,12 @@ free_gpio_ext_pu:
 		gpio_free(pdata->ext_pullup_enable_pin);
 free_gpio:
 	gpio_free(pdata->pin);
+free_input:
+	kfree(input);
 free_master:
 	kfree(master);
+free_pdata:
+	kfree(pdata);
 
 	return err;
 }
@@ -471,8 +512,14 @@ static int w1_gpio_suspend(struct platform_device *pdev, pm_message_t state)
 		pdata->enable_external_pullup(0);
 
 	gpio_direction_input(pdata->pin);
+
+#ifdef CONFIG_W1_WORKQUEUE
+	cancel_delayed_work_sync(&w1_gdev->w1_dwork);
+#endif
 	return 0;
 }
+
+bool w1_is_suspended;
 
 static int w1_gpio_resume(struct platform_device *pdev)
 {
@@ -482,6 +529,13 @@ static int w1_gpio_resume(struct platform_device *pdev)
 		pdata->enable_external_pullup(1);
 
 	gpio_direction_output(pdata->pin, 1);
+
+	w1_is_suspended = true;
+	pr_info("%s: is_suspended true\n", __func__);
+#ifdef CONFIG_W1_WORKQUEUE
+	schedule_delayed_work(&w1_gdev->w1_dwork, HZ * 2);
+#endif
+
 	return 0;
 }
 
@@ -510,7 +564,7 @@ static void __exit w1_gpio_exit(void)
 	platform_driver_unregister(&w1_gpio_driver);
 }
 
-module_init(w1_gpio_init);
+late_initcall(w1_gpio_init);
 module_exit(w1_gpio_exit);
 
 MODULE_DESCRIPTION("GPIO w1 bus master driver");

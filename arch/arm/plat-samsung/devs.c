@@ -680,7 +680,11 @@ struct platform_device s3c_device_i2c0 = {
 struct s3c2410_platform_i2c default_i2c_data __initdata = {
 	.flags		= 0,
 	.slave_addr	= 0x10,
+#ifdef CONFIG_SOC_EXYNOS4415
+	.frequency	= 405*1000,
+#else
 	.frequency	= 400*1000,
+#endif
 	.sda_delay	= 100,
 };
 
@@ -1818,9 +1822,9 @@ void __init s3c_hsotg_set_platdata(struct s3c_hsotg_plat *pd)
 		npd->phy_exit = s5p_usb_phy_exit;
 
 #ifdef CONFIG_MACH_KMINI
-	/* Sqrxtune [13:11] 7b111 : -20% */
+	/* Sqrxtune [13:11] 5b101 : -10% */
 	npd->phy_tune_mask |= (0x7 << 11);
-	npd->phy_tune |= (0x7 << 11);
+	npd->phy_tune |= (0x5 << 11);
 
 	/* Txvreftune [ 3: 0] 9b1001 : +12% */
 	npd->phy_tune_mask |= (0xf);
@@ -2081,7 +2085,7 @@ void __init s3c64xx_spi3_set_platdata(struct s3c64xx_spi_info *pd,
 }
 #endif /* CONFIG_S3C64XX_DEV_SPI3 */
 
-#ifdef CONFIG_MALI_T6XX
+#if defined(CONFIG_MALI_T6XX) || defined(CONFIG_MALI_MIDGARD_WK04)
 static struct resource g3d_resource[] = {
 	[0] = DEFINE_RES_MEM(EXYNOS5_PA_G3D, (SZ_4K * 5)),
 	[1] = DEFINE_RES_IRQ(JOB_IRQ_NUMBER),
@@ -2099,7 +2103,7 @@ struct platform_device exynos5_device_g3d = {
 		.coherent_dma_mask	= DMA_BIT_MASK(32),
 	},
 };
-#endif /*CONFIG_MALI_T6XX*/
+#endif /* CONFIG_MALI_T6XX || CONFIG_MALI_MIDGARD_WK04 */
 struct platform_device exynos4_device_g3d = {
 	.name	= "mali_dev",
 	.id		= 0,

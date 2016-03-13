@@ -30,7 +30,6 @@
 #include "mdnie.h"
 #if defined(CONFIG_LCD_MIPI_EA8061V)
 #include "mdnie_table_kmini.h"
-//#include "secfb_notify.h"
 #endif
 #include "mdnie_color_tone_shannon222.h"
 
@@ -76,6 +75,7 @@ static void __iomem *s3c_mdnie_base;
 #define SCENARIO_IS_VALID(scenario)			(SCENARIO_IS_DMB(scenario) || scenario < SCENARIO_MAX)
 
 #define ACCESSIBILITY_IS_VALID(accessibility)	(accessibility && (accessibility < ACCESSIBILITY_MAX))
+#define IS_HBM(idx)			(idx >= 6)
 
 #define ADDRESS_IS_SCR_WHITE(address)		(address >= S3C_MDNIE_rWHITE_R && address <= S3C_MDNIE_rWHITE_B)
 #define ADDRESS_IS_SCR_RGB(address)			(address >= S3C_MDNIE_rRED_R && address <= S3C_MDNIE_rGREEN_B)
@@ -234,6 +234,14 @@ static struct mdnie_tuning_info *mdnie_request_table(struct mdnie_info *mdnie)
 	if (ACCESSIBILITY_IS_VALID(mdnie->accessibility)) {
 		table = &accessibility_table[mdnie->accessibility];
 		goto exit;
+	} else if (IS_HBM(mdnie->auto_brightness)) {
+#if defined(CONFIG_LCD_MIPI_EA8061V)
+		if((mdnie->scenario == BROWSER_MODE)||(mdnie->scenario == EBOOK_MODE))
+			table = &outdoor_table[OUTDOOR_TEXT];
+		else
+			table = &outdoor_table[OUTDOOR];
+#endif
+		goto exit;
 	} else if (SCENARIO_IS_DMB(mdnie->scenario)) {
 #if defined(CONFIG_TDMB)
 		table = &tune_dmb[mdnie->mode];
@@ -246,8 +254,6 @@ static struct mdnie_tuning_info *mdnie_request_table(struct mdnie_info *mdnie)
 
 exit:
 	mutex_unlock(&mdnie->lock);
-
-	PR_INFO("%s", table->name);
 
 	return table;
 }
@@ -688,6 +694,37 @@ static ssize_t bypass_store(struct device *dev,
 	return count;
 }
 
+static ssize_t auto_brightness_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct mdnie_info *mdnie = dev_get_drvdata(dev);
+
+	return sprintf(buf, "%d, hbm: %d\n", mdnie->auto_brightness, mdnie->hbm);
+}
+
+static ssize_t auto_brightness_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct mdnie_info *mdnie = dev_get_drvdata(dev);
+	unsigned int value;
+	int ret;
+
+	ret = kstrtoul(buf, 0, (unsigned long *)&value);
+	if (ret < 0)
+		return ret;
+
+	dev_info(dev, "%s: value=%d\n", __func__, value);
+
+	mutex_lock(&mdnie->lock);
+	mdnie->hbm = IS_HBM(value) ? HBM_ON : HBM_OFF;
+	mdnie->auto_brightness = value;
+	mutex_unlock(&mdnie->lock);
+
+	mdnie_update(mdnie, 0);
+
+	return count;
+}
+
 static struct device_attribute mdnie_attributes[] = {
 	__ATTR(mode, 0664, mode_show, mode_store),
 	__ATTR(scenario, 0664, scenario_show, scenario_store),
@@ -695,6 +732,7 @@ static struct device_attribute mdnie_attributes[] = {
 	__ATTR(accessibility, 0664, accessibility_show, accessibility_store),
 	__ATTR(color_correct, 0444, color_correct_show, NULL),
 	__ATTR(bypass, 0664, bypass_show, bypass_store),
+	__ATTR(auto_brightness, 0664, auto_brightness_show, auto_brightness_store),
 	__ATTR_NULL,
 };
 
@@ -825,7 +863,9 @@ static int mdnie_remove(struct platform_device *pdev)
 	class_destroy(mdnie_class);
 	kfree(mdnie);
 
+#if 0
 	pm_runtime_disable(mdnie->dev);
+#endif
 
 	return 0;
 }

@@ -21,6 +21,9 @@
 #define CRC_RETRY_COUNT         40
 
 #define FIMC_IS_ISP_CV	"/data/ISP_CV"
+#ifdef CONFIG_SOC_EXYNOS5433
+#define USE_SPI
+#endif
 
 int fimc_is_comp_is_valid(struct fimc_is_core *core);
 int fimc_is_comp_loadfirm(struct fimc_is_core *core);

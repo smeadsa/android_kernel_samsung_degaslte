@@ -31,7 +31,7 @@
 #define GET_DVFS_CHK_FUNC(__SCENARIO) check_ ## __SCENARIO
 #define DECLARE_DVFS_CHK_FUNC(__SCENARIO) \
 	int check_ ## __SCENARIO \
-		(struct fimc_is_device_ischain *device, ...)
+		(struct fimc_is_device_ischain *device, struct fimc_is_frame *frame, ...)
 
 #define SIZE_FHD (1920 * 1080)
 #define SIZE_WHD (2560 * 1440)
@@ -49,7 +49,8 @@ struct fimc_is_dvfs_scenario {
 	int keep_frame_tick;	/* keep qos lock during specific frames when dynamic scenario */
 
 	/* function pointer to check a scenario */
-	int (*check_func)(struct fimc_is_device_ischain *device, ...);
+	int (*check_func)(struct fimc_is_device_ischain *device,
+			struct fimc_is_frame *frame, ...);
 };
 
 struct fimc_is_dvfs_scenario_ctrl {
@@ -61,7 +62,7 @@ struct fimc_is_dvfs_scenario_ctrl {
 };
 
 int fimc_is_dvfs_init(struct fimc_is_resourcemgr *resourcemgr);
-int fimc_is_dvfs_sel_scenario(u32 type,	struct fimc_is_device_ischain *device);
+int fimc_is_dvfs_sel_scenario(u32 type,	struct fimc_is_device_ischain *device, struct fimc_is_frame *frame);
 int fimc_is_get_qos(struct fimc_is_core *core, u32 type, u32 scenario_id);
 int fimc_is_set_dvfs(struct fimc_is_device_ischain *device, u32 scenario_id);
 #endif

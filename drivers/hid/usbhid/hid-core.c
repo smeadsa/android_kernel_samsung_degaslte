@@ -116,7 +116,19 @@ static void hid_reset(struct work_struct *work)
 		dev_dbg(&usbhid->intf->dev, "clear halt\n");
 		rc = usb_clear_halt(hid_to_usb_dev(hid), usbhid->urbin->pipe);
 		clear_bit(HID_CLEAR_HALT, &usbhid->iofl);
-		hid_start_in(hid);
+#ifdef CONFIG_USB_EHCI_S5P
+/*
+ * If we disconnect EHCI hub which is connected to HID device
+ * before the enumeration is done for all HID device,
+ * although usb_clear_halt return error, hid_start_in is retried and
+ * Input interrupt completion handler recieve -EPIPE status.
+ * So, hid_reset is scheduled and print below error message continuously.
+ * The below is workaround to prevent from EHCI retrying hid_start_in
+ * when use_clear_halt return error.
+ */
+		if (rc == 0)
+#endif
+			hid_start_in(hid);
 	}
 
 	else if (test_bit(HID_RESET_PENDING, &usbhid->iofl)) {

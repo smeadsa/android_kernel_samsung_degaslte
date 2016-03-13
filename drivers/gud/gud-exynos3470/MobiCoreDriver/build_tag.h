@@ -26,4 +26,4 @@
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #define MOBICORE_COMPONENT_BUILD_TAG \
-		"*** t-base-300-Carmen-Android-V002_CR ###"
+		"*** t-base-300-Carmen-Android-V002_P1 ###"

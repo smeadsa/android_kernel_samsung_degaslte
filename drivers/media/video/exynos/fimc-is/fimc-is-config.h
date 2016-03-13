@@ -26,7 +26,7 @@
 #define ENABLE_FAST_SHOT
 #define USE_OWN_FAULT_HANDLER
 /* #define ENABLE_MIF_400 */
-/* #define ENABLE_DTP */
+#define ENABLE_DTP
 
 #define CSI_VERSION_0000_0000	0x0
 #define CSI_VERSION_0310_0100	0x03100100
@@ -36,23 +36,31 @@
 
 #if defined(CONFIG_PM_DEVFREQ)
 #define ENABLE_DVFS
-#define START_DVFS_LEVEL FIMC_IS_SN_REAR_PREVIEW_FHD
+#define START_DVFS_LEVEL FIMC_IS_SN_MAX
 #endif
 
 #if defined(CONFIG_SOC_EXYNOS5430)
 #undef ENABLE_SETFILE
 #define SUPPORTED_IS_CMD_VER	132
 #define TARGET_SPI_CH_FOR_PERI	0
-#define FIMC_IS_CSI_VERSION		CSI_VERSION_0000_0000
-#define FIMC_IS_VERSION			FIMC_IS_VERSION_000
+#define FIMC_IS_CSI_VERSION	CSI_VERSION_0000_0000
+#define FIMC_IS_VERSION		FIMC_IS_VERSION_000
 #define HAS_FW_CLOCK_GATE
+
+#elif defined(CONFIG_SOC_EXYNOS5433)
+#define SUPPORTED_IS_CMD_VER	132
+#define TARGET_SPI_CH_FOR_PERI	0
+#define FIMC_IS_CSI_VERSION		CSI_VERSION_0000_0000
+#define FIMC_IS_VERSION		FIMC_IS_VERSION_000
+#define HAS_FW_CLOCK_GATE
+#define MAX_ZOOM_LEVEL 8
 
 #elif defined(CONFIG_SOC_EXYNOS5422)
 #undef ENABLE_SETFILE
 #define SUPPORTED_IS_CMD_VER	132
 #define TARGET_SPI_CH_FOR_PERI	0
-#define FIMC_IS_CSI_VERSION		CSI_VERSION_0000_0000
-#define FIMC_IS_VERSION			FIMC_IS_VERSION_000
+#define FIMC_IS_CSI_VERSION	CSI_VERSION_0000_0000
+#define FIMC_IS_VERSION		FIMC_IS_VERSION_000
 
 #elif defined(CONFIG_SOC_EXYNOS5260)
 #undef ENABLE_SETFILE
@@ -61,16 +69,15 @@
 #define SUPPORTED_EARLY_BUF_DONE
 #define SUPPORTED_IS_CMD_VER	131
 #define TARGET_SPI_CH_FOR_PERI	1
-#define FIMC_IS_CSI_VERSION		CSI_VERSION_0310_0100
-#define FIMC_IS_VERSION			FIMC_IS_VERSION_000
+#define FIMC_IS_CSI_VERSION	CSI_VERSION_0310_0100
+#define FIMC_IS_VERSION		FIMC_IS_VERSION_000
 #define SCALER_PARALLEL_MODE
 
 #elif defined(CONFIG_SOC_EXYNOS4415)
 #undef ENABLE_SETFILE
 #undef ENABLE_DRC
-#undef ENABLE_CLOCK_GATE
 #define SUPPORTED_IS_CMD_VER	132
-#define TARGET_SPI_CH_FOR_PERI 1
+#define TARGET_SPI_CH_FOR_PERI	1
 #define FIMC_IS_CSI_VERSION	CSI_VERSION_0310_0100
 #define FIMC_IS_VERSION		FIMC_IS_VERSION_250
 
@@ -94,12 +101,25 @@
 #define ENABLE_IFLAG
 #define SUPPORTED_IS_CMD_VER	131
 #define TARGET_SPI_CH_FOR_PERI	1
-#define FIMC_IS_CSI_VERSION		CSI_VERSION_0310_0100
-#define FIMC_IS_VERSION			FIMC_IS_VERSION_000
+#define FIMC_IS_CSI_VERSION	CSI_VERSION_0310_0100
+#define FIMC_IS_VERSION		FIMC_IS_VERSION_000
 
 #else
 #error fimc-is driver can NOT support this platform
 
+#endif
+
+#if !defined(MAX_ZOOM_LEVEL)
+/* default max zoom lv is 4 */
+#define MAX_ZOOM_LEVEL 4
+#endif
+
+/* notifier for MIF throttling */
+#if defined(CONFIG_ARM_EXYNOS5433_BUS_DEVFREQ) && defined(CONFIG_CPU_THERMAL_IPA)
+#define EXYNOS_MIF_ADD_NOTIFIER(nb) \
+	exynos_mif_add_notifier(nb)
+#else
+#define EXYNOS_MIF_ADD_NOTIFIER(nb)
 #endif
 
 #if defined(CONFIG_ARM_EXYNOS4415_BUS_DEVFREQ)
@@ -115,6 +135,9 @@
 #define CONFIG_FIMC_IS_BUS_DEVFREQ
 #endif
 #if defined(CONFIG_ARM_EXYNOS5430_BUS_DEVFREQ)
+#define CONFIG_FIMC_IS_BUS_DEVFREQ
+#endif
+#if defined(CONFIG_ARM_EXYNOS5433_BUS_DEVFREQ)
 #define CONFIG_FIMC_IS_BUS_DEVFREQ
 #endif
 
@@ -203,6 +226,9 @@
 
 #define mrinfo(fmt, object, frame, args...) \
 	pr_info("[@][%d:F%d]" fmt, object->instance, frame->fcount,  ##args)
+
+#define mrdbg(fmt, object, frame, args...) \
+	printk(KERN_DEBUG "[@][%d:F%d]" fmt, object->instance, frame->fcount,  ##args)
 
 #define mdbg_common(prefix, fmt, instance, args...)				\
 	do {									\

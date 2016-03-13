@@ -202,6 +202,9 @@ enum sm5502_reg_manual_sw1_value {
 	MANSW1_UART =	(MANUAL_SW1_D_UART << MANUAL_SW1_DM_SHIFT) | \
 			(MANUAL_SW1_D_UART << MANUAL_SW1_DP_SHIFT) | \
 			(MANUAL_SW1_V_CHARGER << MANUAL_SW1_VBUS_SHIFT),
+	MANSW1_OPEN_RUSTPROOF = (MANUAL_SW1_D_OPEN << MANUAL_SW1_DM_SHIFT) | \
+			(MANUAL_SW1_D_UART << MANUAL_SW1_DP_SHIFT) | \
+			(MANUAL_SW1_V_CHARGER << MANUAL_SW1_VBUS_SHIFT),
 };
 
 enum sm5502_muic_reg_init_value {
@@ -235,6 +238,7 @@ struct sm5502_muic_data {
 
 	bool			is_usb_ready;
 	bool			is_factory_start;
+	bool			is_rustproof;
 
 	struct delayed_work	init_work;
 	struct delayed_work	usb_work;

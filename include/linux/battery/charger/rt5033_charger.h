@@ -16,17 +16,15 @@
 #include <linux/mfd/rt5033.h>
 #include <linux/mfd/rt5033_irq.h>
 
-#define RT5033_CHG_STAT_CTRL	0x00
-#define RT5033_CHG_CTRL1			0x01
-#define RT5033_CHG_CTRL2			0x02
-#define RT5033_CHG_CTRL3			0x04
-#define RT5033_CHG_CTRL4			0x05
-#define RT5033_CHG_CTRL5			0x06
-#define RT5033_EOC_CTRL 0x07
-#define RT5033_CHG_RESET			0x08
-#define RT5033_UUG					0x19
-#define RT5033_CONFIG_H				0x0C
-#define RT5033_CONFIG_L				0x0D
+#define RT5033_CHG_STAT_CTRL    0x00
+#define RT5033_CHG_CTRL1        0x01
+#define RT5033_CHG_CTRL2        0x02
+#define RT5033_CHG_CTRL3        0x04
+#define RT5033_CHG_CTRL4        0x05
+#define RT5033_CHG_CTRL5        0x06
+#define RT5033_EOC_CTRL         0x07
+#define RT5033_CHG_RESET        0x08
+#define RT5033_UUG              0x19
 
 
 #define RT5033_CHGENB_MASK  (1 << 0)
@@ -48,13 +46,13 @@
 #define RT5033_ICHRG_MASK 0xf0
 #define RT5033_ICHRG_SHIFT 4
 
-#define RT5033_CHG_IRQ1				0x60
-#define RT5033_CHG_IRQ2				0x61
-#define RT5033_CHG_IRQ3				0x62
+#define RT5033_CHG_IRQ1     0x60
+#define RT5033_CHG_IRQ2     0x61
+#define RT5033_CHG_IRQ3     0x62
 
-#define RT5033_CHG_IRQ_CTRL1		0x63
-#define RT5033_CHG_IRQ_CTRL2		0x64
-#define RT5033_CHG_IRQ_CTRL3		0x65
+#define RT5033_CHG_IRQ_CTRL1     0x63
+#define RT5033_CHG_IRQ_CTRL2     0x64
+#define RT5033_CHG_IRQ_CTRL3     0x65
 
 /* RT5033_CHG_STAT */
 #define RT5033_EXT_PMOS_CTRL				0x1

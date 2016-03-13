@@ -217,6 +217,9 @@ static int set_aif2_mute_status(struct snd_kcontrol *kcontrol,
 	pr_info("set aif2_digital_mute : %s\n",
 			switch_mode_text[aif2_digital_mute]);
 
+	if (aif2_digital_mute)
+		msleep(50);
+
 	return 0;
 }
 
@@ -1287,6 +1290,8 @@ static int universal222ap_late_probe(struct snd_soc_card *card)
 	struct wm8994_priv *wm8994 = snd_soc_codec_get_drvdata(codec);
 	const struct exynos_sound_platform_data *sound_pdata;
 	int ret;
+
+	codec->ignore_pmdown_time = true;
 
 	sound_pdata = exynos_sound_get_platform_data();
 	if (IS_ERR_OR_NULL(sound_pdata)) {

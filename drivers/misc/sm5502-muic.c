@@ -306,6 +306,40 @@ static int sm5502_set_gpio_doc_switch(int val)
 }
 #endif /* GPIO_DOC_SWITCH */
 
+static ssize_t sm5502_muic_show_uart_en(struct device *dev,
+						struct device_attribute *attr,
+						char *buf)
+{
+	struct sm5502_muic_data *muic_data = dev_get_drvdata(dev);
+
+	if (!muic_data->is_rustproof) {
+		pr_info("%s:%s UART ENABLE\n", MUIC_DEV_NAME, __func__);
+		return sprintf(buf, "1\n");
+	}
+	pr_info("%s:%s UART DISABLE\n", MUIC_DEV_NAME, __func__);
+	return sprintf(buf, "0\n");
+}
+
+static ssize_t sm5502_muic_set_uart_en(struct device *dev,
+						struct device_attribute *attr,
+						const char *buf, size_t count)
+{
+	struct sm5502_muic_data *muic_data = dev_get_drvdata(dev);
+
+	if (!strncmp(buf, "1", 1)) {
+		muic_data->is_rustproof = false;
+	} else if (!strncmp(buf, "0", 1)) {
+		muic_data->is_rustproof = true;
+	} else {
+		pr_warn("%s:%s invalid value\n", MUIC_DEV_NAME, __func__);
+	}
+
+	pr_info("%s:%s uart_en(%d)\n", MUIC_DEV_NAME, __func__,
+			!muic_data->is_rustproof);
+
+	return count;
+}
+
 static ssize_t sm5502_muic_show_uart_sel(struct device *dev,
 					   struct device_attribute *attr,
 					   char *buf)
@@ -699,6 +733,7 @@ static ssize_t sm5502_muic_set_apo_factory(struct device *dev,
 	return count;
 }
 
+static DEVICE_ATTR(uart_en, 0664, sm5502_muic_show_uart_en, sm5502_muic_set_uart_en);
 static DEVICE_ATTR(uart_sel, 0664, sm5502_muic_show_uart_sel,
 		sm5502_muic_set_uart_sel);
 static DEVICE_ATTR(usb_sel, 0664,
@@ -723,6 +758,7 @@ static DEVICE_ATTR(apo_factory, 0664,
 		sm5502_muic_set_apo_factory);
 
 static struct attribute *sm5502_muic_attributes[] = {
+	&dev_attr_uart_en.attr,
 	&dev_attr_uart_sel.attr,
 	&dev_attr_usb_sel.attr,
 	&dev_attr_adc.attr,
@@ -882,6 +918,12 @@ static int com_to_uart(struct sm5502_muic_data *muic_data)
 	enum sm5502_reg_manual_sw1_value reg_val;
 	int ret = 0;
 
+	if(muic_data->is_rustproof)
+	{
+		pr_info("%s:%s rustproof mode : don't open uart path\n",
+			MUIC_DEV_NAME, __func__);
+		return ret;
+	}
 	reg_val = MANSW1_UART;
 	ret = set_com_sw(muic_data, reg_val);
 	if (ret)
@@ -1820,11 +1862,13 @@ static void sm5502_muic_detect_dev(struct sm5502_muic_data *muic_data)
 		pr_info("%s : JIG_UART_OFF DETECTED\n", MUIC_DEV_NAME);
 		break;
 	case DEV_TYPE2_JIG_USB_OFF:
+		if (!vbvolt) break;
 		intr = MUIC_INTR_ATTACH;
 		new_dev = ATTACHED_DEV_JIG_USB_OFF_MUIC;
 		pr_info("%s : JIG_USB_OFF DETECTED\n", MUIC_DEV_NAME);
 		break;
 	case DEV_TYPE2_JIG_USB_ON:
+		if (!vbvolt) break;
 		intr = MUIC_INTR_ATTACH;
 		new_dev = ATTACHED_DEV_JIG_USB_ON_MUIC;
 		pr_info("%s : JIG_USB_ON DETECTED\n", MUIC_DEV_NAME);
@@ -1866,6 +1910,7 @@ static void sm5502_muic_detect_dev(struct sm5502_muic_data *muic_data)
 		pr_info("%s : TYPE1/2 CHARGER DETECTED(TA)\n", MUIC_DEV_NAME);
 		break;
 	case ADC_JIG_USB_OFF: /* 255k */
+		if (!vbvolt) break;
 		if (new_dev != ATTACHED_DEV_JIG_USB_OFF_MUIC) {
 			intr = MUIC_INTR_ATTACH;
 			new_dev = ATTACHED_DEV_JIG_USB_OFF_MUIC;
@@ -1873,6 +1918,7 @@ static void sm5502_muic_detect_dev(struct sm5502_muic_data *muic_data)
 		}
 		break;
 	case ADC_JIG_USB_ON:
+		if (!vbvolt) break;
 		if (new_dev != ATTACHED_DEV_JIG_USB_ON_MUIC) {
 			intr = MUIC_INTR_ATTACH;
 			new_dev = ATTACHED_DEV_JIG_USB_ON_MUIC;
@@ -1960,7 +2006,7 @@ static int sm5502_muic_reg_init(struct sm5502_muic_data *muic_data)
 	ret = sm5502_i2c_write_byte(i2c, SM5502_MUIC_REG_INTMASK2,
 			REG_INTMASK2_VALUE);
 	if (ret < 0)
-		pr_err("%s: err mask interrupt1(%d)\n", __func__, ret);
+		pr_err("%s: err mask interrupt2(%d)\n", __func__, ret);
 
 #ifdef CONFIG_MUIC_SM5502_ENABLE_AUTOSW
 	/* set AUTO SW mode */
@@ -2260,6 +2306,20 @@ static int sm5502_muic_probe(struct i2c_client *i2c,
 		pr_err("%s: failed to init muic register(%d)\n", __func__, ret);
 		goto fail;
 	}
+
+	ret = sm5502_i2c_read_byte(muic_data->i2c, SM5502_MUIC_REG_MANSW1);
+	if (ret < 0)
+		pr_err("%s: err mansw1 (%d)\n", __func__, ret);
+
+	/* RUSTPROOF : disable UART connection if MANSW1 
+		from BL is OPEN_RUSTPROOF */
+	if (ret == MANSW1_OPEN_RUSTPROOF)
+	{
+		muic_data->is_rustproof = true;
+		com_to_open_with_vbus(muic_data);
+	}
+	else
+		muic_data->is_rustproof = false;
 
 	if (muic_data->switch_data->init_cb)
 		muic_data->switch_data->init_cb();

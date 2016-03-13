@@ -3997,10 +3997,16 @@ int __devinit dw_mci_probe(struct dw_mci *host)
 		host->data_offset = DATA_OFFSET;
 	else
 		host->data_offset = DATA_240A_OFFSET;
-
+#if defined(CONFIG_BCM4334) || defined(CONFIG_BCM4334_MODULE)
 	if (host->pdata->cd_type == DW_MCI_CD_EXTERNAL)
+	{
+	    printk("MMC hostcontroller for WIFI : %s\n",mmc_hostname(host->slot[0]->mmc));
 		host->pdata->ext_cd_init(&dw_mci_notify_change,host->slot[0]->mmc);
-
+	}
+#else /* CONFIG_BCM4334 || CONFIG_BCM4334_MODULE */
+	if (host->pdata->cd_type == DW_MCI_CD_EXTERNAL)
+		host->pdata->ext_cd_init(&dw_mci_notify_change);
+#endif /* CONFIG_BCM4334 || CONFIG_BCM4334_MODULE*/
 	/*
 	 * Enable interrupts for command done, data over, data empty, card det,
 	 * receive ready and error such as transmit, receive timeout, crc error

@@ -56,12 +56,12 @@
 #define LDI_MTP_REG			0xC8
 #define LDI_MTP_LEN			57	/* MTP */
 #define LDI_ELVSS_REG			0xB6
-#define LDI_ELVSS_LEN			21
+#define LDI_ELVSS_LEN			4
 #define LDI_TSET_REG			0xB8
-#define LDI_TSET_LEN			6
+#define LDI_TSET_LEN			1
 
 #define LDI_COORDINATE_REG		0xD8
-#define LDI_COORDINATE_LEN		4
+#define LDI_COORDINATE_LEN		7
 
 #ifdef SMART_DIMMING_DEBUG
 #define smtd_dbg(format, arg...)	printk(format, ##arg)
@@ -80,6 +80,9 @@ struct lcd_info {
 	unsigned int			current_psre;
 	unsigned int			current_tset;
 	unsigned int			elvss_compensation;
+	unsigned int			elvss_status_max;
+	unsigned int			elvss_status_hbm;
+	unsigned int			elvss_status_350;
 	unsigned int			ldi_enable;
 	unsigned int			power;
 	struct mutex			lock;
@@ -104,6 +107,7 @@ struct lcd_info {
 
 	unsigned int			coordinate[2];
 	unsigned char			date[2];
+	unsigned int			need_update;
 
 	struct mipi_dsim_device		*dsim;
 };
@@ -192,9 +196,9 @@ static void ea8061v_read_coordinate(struct lcd_info *lcd)
 	int ret;
 	unsigned char buf[LDI_COORDINATE_LEN] = {0,};
 
-	unsigned char SEQ_COORDINATE_POSITION[] = {0xB0, 3, 0x00};
+//	unsigned char SEQ_COORDINATE_POSITION[] = {0xB0, 3, 0x00};
 
-	ea8061v_write(lcd, SEQ_COORDINATE_POSITION, ARRAY_SIZE(SEQ_COORDINATE_POSITION));
+//	ea8061v_write(lcd, SEQ_COORDINATE_POSITION, ARRAY_SIZE(SEQ_COORDINATE_POSITION));
 
 	ret = ea8061v_read(lcd, LDI_COORDINATE_REG, buf, LDI_COORDINATE_LEN);
 
@@ -220,7 +224,7 @@ static int ea8061v_read_mtp(struct lcd_info *lcd, u8 *buf)
 {
 	int ret, i;
 
-	ret = ea8061v_read(lcd, LDI_MTP_REG, buf, LDI_MTP_LEN+6);
+	ret = ea8061v_read(lcd, LDI_MTP_REG, buf, LDI_MTP_LEN);
 
 	if (ret < 0)
 		dev_err(&lcd->ld->dev, "%s failed\n", __func__);
@@ -248,6 +252,7 @@ static int ea8061v_read_elvss(struct lcd_info *lcd, u8 *buf)
 	return ret;
 }
 
+#if 0
 static int ea8061v_read_tset(struct lcd_info *lcd)
 {
 	int ret, i;
@@ -262,15 +267,23 @@ static int ea8061v_read_tset(struct lcd_info *lcd)
 
 	return ret;
 }
+#endif
 
 static void  ea8061v_update_seq(struct lcd_info *lcd)
 {
-	if (lcd->id[2] == 0x83) { /* Panel rev.A  */
-		/* Panel Command */
+	if (lcd->id[2] == 0x83) {  /* Panel rev.A  */
 		pSEQ_AID_SET = SEQ_AID_SET_RevA;
-
-		/* Dynamic AID parameta */
 		paor_cmd = aor_cmd_RevA;
+	} else  if ((lcd->id[2] == 0x84)||(lcd->id[2] == 0x95) ) { /* Panel rev.BC */
+		paor_cmd = aor_cmd_RevBC;
+	} else if (lcd->id[2] == 0x96) { /* Panel rev.D */
+		paor_cmd = aor_cmd_RevD;
+		pELVSS_DIM_TABLE = ELVSS_DIM_TABLE_RevDE;
+		pELVSS_TABLE = ELVSS_TABLE_RevD;
+	} else if (lcd->id[2] == 0x97) { /* Panel rev.E */
+		paor_cmd = aor_cmd_RevE;
+		pELVSS_DIM_TABLE = ELVSS_DIM_TABLE_RevDE;
+		pELVSS_TABLE = ELVSS_TABLE_RevE;
 	}
 }
 
@@ -285,10 +298,11 @@ static int get_backlight_level_from_brightness(int brightness)
 			backlightlevel = 0;
 			break;
 		}
-		if (DIM_TABLE[i] >=  gamma) {
-			backlightlevel = i;
+
+		if (DIM_TABLE[i] > gamma)
 			break;
-		}
+
+		backlightlevel = i;
 	}
 
 	return backlightlevel;
@@ -337,7 +351,7 @@ aid_update:
 	ea8061v_write(lcd, lcd->aor[lcd->bl], AID_PARAM_SIZE);
 
 exit:
-	ea8061v_write(lcd, SEQ_GAMMA_UPDATE, ARRAY_SIZE(SEQ_GAMMA_UPDATE));
+
 	return 0;
 }
 
@@ -353,10 +367,16 @@ static int ea8061v_set_acl(struct lcd_info *lcd, u8 force)
 
 acl_update:
 	if (force || lcd->current_acl != ACL_CUTOFF_TABLE[level][1]) {
+		if (level == ACL_STATUS_15P)
+			ea8061v_write(lcd, SEQ_ACL_OPR_32FRAME, ARRAY_SIZE(SEQ_ACL_OPR_32FRAME));
+		else
+			ea8061v_write(lcd, SEQ_ACL_OPR_16FRAME, ARRAY_SIZE(SEQ_ACL_OPR_16FRAME));
 		ret = ea8061v_write(lcd, ACL_CUTOFF_TABLE[level], ACL_PARAM_SIZE);
+
 		lcd->current_acl = ACL_CUTOFF_TABLE[level][1];
 		dev_info(&lcd->ld->dev, "acl: %d, auto_brightness: %d\n", lcd->current_acl, lcd->auto_brightness);
 	}
+
 
 	if (!ret)
 		ret = -EPERM;
@@ -373,9 +393,9 @@ static int ea8061v_set_elvss(struct lcd_info *lcd, u8 force)
 	//u8 cur_temp, temp;
 
 	nit = DIM_TABLE[lcd->bl];
-	elvss_level = ELVSS_STATUS_350;
+	elvss_level = lcd->elvss_status_350;
 
-	for (i = 0; i < ELVSS_STATUS_MAX; i++) {
+	for (i = 0; i < lcd->elvss_status_max ; i++) {
 		if (nit <= pELVSS_DIM_TABLE[i]) {
 			elvss_level = i;
 			break;
@@ -383,7 +403,7 @@ static int ea8061v_set_elvss(struct lcd_info *lcd, u8 force)
 	}
 
 	if ((lcd->current_elvss != elvss_level) &&
-		(lcd->current_elvss == ELVSS_STATUS_HBM || elvss_level == ELVSS_STATUS_HBM))
+		(lcd->current_elvss == lcd->elvss_status_hbm || elvss_level == lcd->elvss_status_hbm))
 		update_hbm = 1;
 /*
 	if (lcd->acl_enable)
@@ -405,7 +425,7 @@ static int ea8061v_set_elvss(struct lcd_info *lcd, u8 force)
 	//		lcd->elvss_hbm[1][1] = temp;
 			lcd->elvss_hbm[0][2] = elvss;
 
-			if (elvss_level == ELVSS_STATUS_HBM)
+			if (elvss_level == lcd->elvss_status_hbm)
 				ret = ea8061v_write(lcd, lcd->elvss_hbm[1], ARRAY_SIZE(lcd->elvss_hbm[1]));
 			else
 				ret = ea8061v_write(lcd, lcd->elvss_hbm[0], ARRAY_SIZE(lcd->elvss_hbm[0]));
@@ -428,7 +448,6 @@ elvss_err:
 }
 
 
-#if 0
 static int ea8061v_set_tset(struct lcd_info *lcd, u8 force)
 {
 	int ret = 0;
@@ -444,10 +463,11 @@ static int ea8061v_set_tset(struct lcd_info *lcd, u8 force)
 
 	if (force || lcd->temperature != lcd->current_temp) {
 		lcd->tset_table[LDI_TSET_LEN] = tset;
+		lcd->tset_table[0]= LDI_TSET_REG;
 		ret = ea8061v_write(lcd, lcd->tset_table, LDI_TSET_LEN + 1);
 		lcd->current_temp = lcd->temperature;
-		dev_info(&lcd->ld->dev, "temperature: %d, tset: %d\n",
-				lcd->temperature, tset);
+		dev_info(&lcd->ld->dev, "temperature: %d, tset: %d %02x %02x\n",
+				lcd->temperature, tset, lcd->tset_table[0], lcd->tset_table[1]);
 	}
 
 	if (!ret) {
@@ -458,7 +478,6 @@ static int ea8061v_set_tset(struct lcd_info *lcd, u8 force)
 err:
 	return ret;
 }
-#endif
 
 void init_dynamic_aid(struct lcd_info *lcd)
 {
@@ -475,12 +494,18 @@ void init_dynamic_aid(struct lcd_info *lcd)
 	lcd->daid.gc_tbls = gamma_curve_tables;
 	lcd->daid.gc_lut = gamma_curve_lut;
 
-	 if (lcd->id[2] == 0x83) {
+	 if (lcd->id[2] == 0x83) { /* Panel rev.A  */
 		lcd->daid.offset_gra = offset_gradation_revA;
 		lcd->daid.offset_color = offset_color_revA;
-	} else {
-		lcd->daid.offset_gra = offset_gradation_revB;
-		lcd->daid.offset_color = offset_color_revB;
+	} else if ((lcd->id[2] == 0x84)||(lcd->id[2] == 0x95)){ /* Panel rev.B.C  */
+		lcd->daid.offset_gra = offset_gradation_revBC;
+		lcd->daid.offset_color = offset_color_revBC;
+	} else if (lcd->id[2] == 0x96){ /* Panel rev.D  */
+		lcd->daid.offset_gra = offset_gradation_revD;
+		lcd->daid.offset_color = offset_color_revD;
+	} else if (lcd->id[2] == 0x97){ /* Panel rev.E  */
+		lcd->daid.offset_gra = offset_gradation_revE;
+		lcd->daid.offset_color = offset_color_revE;
 	}
 }
 
@@ -525,7 +550,7 @@ static int init_gamma_table(struct lcd_info *lcd , const u8 *mtp_data)
 
 	/* allocate memory for local gamma table */
 	gamma = kzalloc(IBRIGHTNESS_MAX * sizeof(int *), GFP_KERNEL);
-	if (IS_ERR_OR_NULL(gamma)) {
+	if (!gamma) {
 		pr_err("failed to allocate gamma table\n");
 		ret = -ENOMEM;
 		goto err_alloc_gamma_table;
@@ -533,7 +558,7 @@ static int init_gamma_table(struct lcd_info *lcd , const u8 *mtp_data)
 
 	for (i = 0; i < IBRIGHTNESS_MAX; i++) {
 		gamma[i] = kzalloc(IV_MAX*CI_MAX * sizeof(int), GFP_KERNEL);
-		if (IS_ERR_OR_NULL(gamma[i])) {
+		if (!gamma[i]) {
 			pr_err("failed to allocate gamma\n");
 			ret = -ENOMEM;
 			goto err_alloc_gamma;
@@ -542,7 +567,7 @@ static int init_gamma_table(struct lcd_info *lcd , const u8 *mtp_data)
 
 	/* allocate memory for gamma table */
 	lcd->gamma_table = kzalloc(GAMMA_MAX * sizeof(u8 *), GFP_KERNEL);
-	if (IS_ERR_OR_NULL(lcd->gamma_table)) {
+	if (!lcd->gamma_table) {
 		pr_err("failed to allocate gamma table 2\n");
 		ret = -ENOMEM;
 		goto err_alloc_gamma_table2;
@@ -550,7 +575,7 @@ static int init_gamma_table(struct lcd_info *lcd , const u8 *mtp_data)
 
 	for (i = 0; i < GAMMA_MAX; i++) {
 		lcd->gamma_table[i] = kzalloc(GAMMA_PARAM_SIZE * sizeof(u8), GFP_KERNEL);
-		if (IS_ERR_OR_NULL(lcd->gamma_table[i])) {
+		if (!lcd->gamma_table[i]) {
 			pr_err("failed to allocate gamma 2\n");
 			ret = -ENOMEM;
 			goto err_alloc_gamma2;
@@ -604,10 +629,10 @@ err_alloc_gamma_table2:
 	i = IBRIGHTNESS_MAX;
 err_alloc_gamma:
 	while (i > 0) {
-		kfree(lcd->gamma_table[i-1]);
+		kfree(gamma[i-1]);
 		i--;
 	}
-	kfree(lcd->gamma_table);
+	kfree(gamma);
 err_alloc_gamma_table:
 	return ret;
 }
@@ -617,7 +642,7 @@ static int init_aid_dimming_table(struct lcd_info *lcd, const u8 *mtp_data)
 	int i, j;
 
 	for (i = 0; i < GAMMA_MAX -1; i++) {
-		memcpy(lcd->aor[i], SEQ_AID_SET, ARRAY_SIZE(SEQ_AID_SET));
+		memcpy(lcd->aor[i], pSEQ_AID_SET, ARRAY_SIZE(SEQ_AID_SET));
 		lcd->aor[i][3] = paor_cmd[i][0];
 		lcd->aor[i][4] = paor_cmd[i][1];
 
@@ -634,8 +659,16 @@ static int init_elvss_table(struct lcd_info *lcd, u8 *elvss_data)
 {
 	int i, j, k, ret;
 
+	if (lcd->id[2] >= 0x96)
+		lcd->elvss_status_max = ELVSS_STATUS_MAX+1; /* Rev D,E Panel */
+	 else
+		lcd->elvss_status_max = ELVSS_STATUS_MAX; /* Rev A,B,C Panel */
+
+	 lcd->elvss_status_hbm = lcd->elvss_status_max -1;
+	 lcd->elvss_status_350 = lcd->elvss_status_max -2;
+
 	for (k = 0; k < 2; k++) {
-		lcd->elvss_table[k] = kzalloc(ELVSS_STATUS_MAX * sizeof(u8 *), GFP_KERNEL);
+		lcd->elvss_table[k] = kzalloc(lcd->elvss_status_max * sizeof(u8 *), GFP_KERNEL);
 
 		if (IS_ERR_OR_NULL(lcd->elvss_table[k])) {
 			pr_err("failed to allocate elvss table\n");
@@ -643,7 +676,7 @@ static int init_elvss_table(struct lcd_info *lcd, u8 *elvss_data)
 			goto err_alloc_elvss_table;
 		}
 
-		for (i = 0; i < ELVSS_STATUS_MAX; i++) {
+		for (i = 0; i < lcd->elvss_status_max; i++) {
 			lcd->elvss_table[k][i] = kzalloc(ELVSS_PARAM_SIZE * sizeof(u8), GFP_KERNEL);
 			if (IS_ERR_OR_NULL(lcd->elvss_table[k][i])) {
 				pr_err("failed to allocate elvss\n");
@@ -652,11 +685,14 @@ static int init_elvss_table(struct lcd_info *lcd, u8 *elvss_data)
 			}
 
 			lcd->elvss_table[k][i][0] = 0xB6;
-			lcd->elvss_table[k][i][1] = 0x48;
-			lcd->elvss_table[k][i][2] += ELVSS_TABLE[i];
+			if (k==0)
+				lcd->elvss_table[k][i][1] = 0x5c;
+			else
+				lcd->elvss_table[k][i][1] = 0x4C;
+			lcd->elvss_table[k][i][2] += pELVSS_TABLE[i];
 		}
 
-		for (i = 0; i < ELVSS_STATUS_MAX; i++) {
+		for (i = 0; i < lcd->elvss_status_max; i++) {
 			for (j = 0; j < ELVSS_PARAM_SIZE; j++)
 				smtd_dbg("0x%02x, ", lcd->elvss_table[k][i][j]);
 			smtd_dbg("\n");
@@ -681,7 +717,7 @@ static int init_hbm_parameter(struct lcd_info *lcd, const u8 *mtp_data, const u8
 	int i;
 
 	for (i = 0; i < GAMMA_PARAM_SIZE; i++)
-		lcd->gamma_table[GAMMA_HBM][i] = lcd->gamma_table[GAMMA_300CD][i];
+		lcd->gamma_table[GAMMA_HBM][i] = lcd->gamma_table[GAMMA_350CD][i];
 
 	/* C8 : 34~39 -> CA : 1~6 */
 	for (i = 0; i < 6; i++)
@@ -691,8 +727,8 @@ static int init_hbm_parameter(struct lcd_info *lcd, const u8 *mtp_data, const u8
 	for (i = 0; i < 15; i++)
 		lcd->gamma_table[GAMMA_HBM][7 + i] = mtp_data[42 + i];
 
-	lcd->elvss_table[0][ELVSS_STATUS_HBM][2] = 0x8A;
-	lcd->elvss_table[1][ELVSS_STATUS_HBM][2] = 0x8A;
+	lcd->elvss_table[0][lcd->elvss_status_hbm][2] = 0x8A;
+	lcd->elvss_table[1][lcd->elvss_status_hbm][2] = 0x8A;
 
 	lcd->elvss_hbm[1][ELVSS_PARAM_SIZE] = mtp_data[39];
 	lcd->elvss_hbm[0][ELVSS_PARAM_SIZE] = elvss_data[LDI_ELVSS_LEN - 1];
@@ -715,17 +751,18 @@ static int update_brightness(struct lcd_info *lcd, u8 force)
 		lcd->bl = GAMMA_HBM;
 
 	if ((force) || ((lcd->ldi_enable) && (lcd->current_bl != lcd->bl))) {
+		ea8061v_write(lcd, SEQ_APPLY_MTP_KEY_UNLOCK, ARRAY_SIZE(SEQ_APPLY_MTP_KEY_UNLOCK));
+
 		ea8061v_gamma_ctl(lcd);
-
 		ea8061v_aid_parameter_ctl(lcd, force);
-
-		ea8061v_set_acl(lcd, force);
-
+		ea8061v_set_tset(lcd, force);
 		ea8061v_set_elvss(lcd, force);
+		ea8061v_set_acl(lcd, force);
+		ea8061v_write(lcd, SEQ_GAMMA_UPDATE, ARRAY_SIZE(SEQ_GAMMA_UPDATE));
+
+		ea8061v_write(lcd, SEQ_APPLY_MTP_KEY_LOCK, ARRAY_SIZE(SEQ_APPLY_MTP_KEY_LOCK));
 
 		/*ea8061v_set_psre(lcd, force);*/
-
-		/*ea8061v_set_tset(lcd, force);*/
 
 		lcd->current_bl = lcd->bl;
 
@@ -741,27 +778,28 @@ static int update_brightness(struct lcd_info *lcd, u8 force)
 static int ea8061v_ldi_init(struct lcd_info *lcd)
 {
 	int ret = 0;
-	ea8061v_write(lcd, SEQ_APPLY_LEVEL_2_KEY_ENABLE, ARRAY_SIZE(SEQ_APPLY_LEVEL_2_KEY_ENABLE));
-	ea8061v_write(lcd, SEQ_APPLY_MTP_KEY_ENABLE, ARRAY_SIZE(SEQ_APPLY_MTP_KEY_ENABLE));
+	lcd->need_update = 0;
+
+	ea8061v_write(lcd, SEQ_APPLY_LEVEL_2_KEY_UNLOCK, ARRAY_SIZE(SEQ_APPLY_LEVEL_2_KEY_UNLOCK));
 	ea8061v_write(lcd, SEQ_DCDC_SET, ARRAY_SIZE(SEQ_DCDC_SET));
 	ea8061v_write(lcd, SEQ_SOURCE_CONTROL, ARRAY_SIZE(SEQ_SOURCE_CONTROL));
-	ea8061v_write(lcd, SEQ_APPLY_LEVEL_3_KEY_ENABLE, ARRAY_SIZE(SEQ_APPLY_LEVEL_3_KEY_ENABLE));
+	ea8061v_write(lcd, SEQ_APPLY_LEVEL_3_KEY_UNLOCK, ARRAY_SIZE(SEQ_APPLY_LEVEL_3_KEY_UNLOCK));
 	ea8061v_write(lcd, SEQ_GLOBAL_PARA_12TH, ARRAY_SIZE(SEQ_GLOBAL_PARA_12TH));
 	ea8061v_write(lcd, SEQ_ERR_FG_OUTPUT_SET1, ARRAY_SIZE(SEQ_ERR_FG_OUTPUT_SET1));
 	ea8061v_write(lcd, SEQ_GLOBAL_PARA_6TH, ARRAY_SIZE(SEQ_GLOBAL_PARA_6TH));
 	ea8061v_write(lcd, SEQ_ERR_FG_OUTPUT_SET2, ARRAY_SIZE(SEQ_ERR_FG_OUTPUT_SET2));
 	ea8061v_write(lcd, SEQ_DSI_ERR_OUT, ARRAY_SIZE(SEQ_DSI_ERR_OUT));
-	ea8061v_write(lcd, SEQ_APPLY_LEVEL_3_KEY_DISABLE, ARRAY_SIZE(SEQ_APPLY_LEVEL_3_KEY_DISABLE));
-
+	ea8061v_write(lcd, SEQ_APPLY_LEVEL_3_KEY_LOCK, ARRAY_SIZE(SEQ_APPLY_LEVEL_3_KEY_LOCK));
 	ea8061v_write(lcd, SEQ_SLEEP_OUT, ARRAY_SIZE(SEQ_SLEEP_OUT));
 	mdelay(120);
-	ea8061v_write(lcd, SEQ_DISPLAY_ON, ARRAY_SIZE(SEQ_DISPLAY_ON));
+
 	return ret;
 }
 
 static int ea8061v_ldi_enable(struct lcd_info *lcd)
 {
 	int ret = 0;
+	ea8061v_write(lcd, SEQ_DISPLAY_ON, ARRAY_SIZE(SEQ_DISPLAY_ON));
 	return ret;
 }
 
@@ -774,10 +812,9 @@ static int ea8061v_ldi_disable(struct lcd_info *lcd)
 	ea8061v_write(lcd, SEQ_DISPLAY_OFF, ARRAY_SIZE(SEQ_DISPLAY_OFF));
 	msleep(35);
 	ea8061v_write(lcd, SEQ_SLEEP_IN, ARRAY_SIZE(SEQ_SLEEP_IN));
+	msleep(120);
 
 	dev_info(&lcd->ld->dev, "- %s\n", __func__);
-
-	msleep(135);
 
 	return ret;
 }
@@ -794,14 +831,20 @@ static int ea8061v_power_on(struct lcd_info *lcd)
 		goto err;
 	}
 
- 	ret = ea8061v_ldi_enable(lcd);
+	ret = ea8061v_ldi_enable(lcd);
 	if (ret) {
 		dev_err(&lcd->ld->dev, "failed to enable ldi.\n");
 		goto err;
 	}
 
+	mutex_lock(&lcd->bl_lock);
 	lcd->ldi_enable = 1;
+	mutex_unlock(&lcd->bl_lock);
 
+	if (lcd->bl == 0&&lcd->auto_brightness!=6) /* Update_brightness not in HBM wakeup */ 
+	   lcd->need_update |= 1;
+
+	if (lcd->need_update)
 	update_brightness(lcd, 1);
 
 	dev_info(&lcd->ld->dev, "- %s\n", __func__);
@@ -815,7 +858,9 @@ static int ea8061v_power_off(struct lcd_info *lcd)
 
 	dev_info(&lcd->ld->dev, "+ %s\n", __func__);
 
+	mutex_lock(&lcd->bl_lock);
 	lcd->ldi_enable = 0;
+	mutex_unlock(&lcd->bl_lock);
 
 	ret = ea8061v_ldi_disable(lcd);
 
@@ -882,6 +927,8 @@ static int ea8061v_set_brightness(struct backlight_device *bd)
 			return -EINVAL;
 		}
 	}
+	else
+		lcd->need_update = 1;
 
 	return ret;
 }
@@ -981,7 +1028,7 @@ static ssize_t gamma_table_show(struct device *dev,
 		printk("\n");
 	}
 
-	for (i = 0; i < ELVSS_STATUS_MAX; i++) {
+	for (i = 0; i < lcd->elvss_status_max; i++) {
 		for (j = 0; j < ELVSS_PARAM_SIZE; j++)
 			printk("0x%02x, ", lcd->elvss_table[0][i][j]);
 		printk("\n");
@@ -1122,54 +1169,6 @@ static ssize_t manufacture_date_show(struct device *dev,
 	return strlen(buf);
 }
 
-
-static ssize_t parameter_show(struct device *dev,
-	struct device_attribute *attr, char *buf)
-{
-	struct lcd_info *lcd = dev_get_drvdata(dev);
-	char *pos = buf;
-	unsigned char temp[50] = {0,};
-	int i;
-
-	if (!lcd->ldi_enable)
-		return -EINVAL;
-
-	/* ID */
-	ea8061v_read(lcd, LDI_ID_REG, temp, LDI_ID_LEN);
-	pos += sprintf(pos, "ID    [04]: %02x, %02x, %02x\n", temp[0], temp[1], temp[2]);
-
-#if 0
-	/* PSRE */
-	ea8061v_read(lcd, 0xB5, temp, 3);
-	pos += sprintf(pos, "PSRE  [B5]: %02x, %02x, %02x\n", temp[0], temp[1], temp[2]);
-#endif
-
-	/* ACL */
-	ea8061v_read(lcd, 0x56, temp, ACL_PARAM_SIZE);
-	pos += sprintf(pos, "ACL   [56]: %02x, %02x, %02x\n", temp[0], temp[1], temp[2]);
-
-	/* ELVSS */
-	ea8061v_read(lcd, LDI_ELVSS_REG, temp, ELVSS_PARAM_SIZE);
-	pos += sprintf(pos, "ELVSS [B6]: %02x, %02x, %02x / %d\n",
-		temp[0], temp[1], temp[2], lcd->elvss_compensation);
-
-	/* TSET */
-	ea8061v_read(lcd, LDI_TSET_REG, temp, LDI_TSET_LEN);
-	pos += sprintf(pos, "TSET  [B8]: ");
-	for (i = 0; i < LDI_TSET_LEN; i++)
-		pos += sprintf(pos, "%02x, ", temp[i]);
-	pos += sprintf(pos, "/ %d, %d\n", lcd->temperature, lcd->current_tset);
-
-	/* GAMMA */
-	ea8061v_read(lcd, 0xCA, temp, GAMMA_PARAM_SIZE);
-	pos += sprintf(pos, "GAMMA [CA]: ");
-	for (i = 0; i < GAMMA_PARAM_SIZE; i++)
-		pos += sprintf(pos, "%02x, ", temp[i]);
-	pos += sprintf(pos, "\n");
-
-	return pos - buf;
-}
-
 static ssize_t aid_log_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
@@ -1217,7 +1216,6 @@ static DEVICE_ATTR(siop_enable, 0664, siop_enable_show, siop_enable_store);
 static DEVICE_ATTR(temperature, 0664, temperature_show, temperature_store);
 static DEVICE_ATTR(color_coordinate, 0444, color_coordinate_show, NULL);
 static DEVICE_ATTR(manufacture_date, 0444, manufacture_date_show, NULL);
-static DEVICE_ATTR(parameter, 0444, parameter_show, NULL);
 static DEVICE_ATTR(aid_log, 0444, aid_log_show, NULL);
 
 static int ea8061v_probe(struct mipi_dsim_device *dsim)
@@ -1303,10 +1301,6 @@ static int ea8061v_probe(struct mipi_dsim_device *dsim)
 	if (ret < 0)
 		dev_err(&lcd->ld->dev, "failed to add sysfs entries, %d\n", __LINE__);
 
-	ret = device_create_file(&lcd->ld->dev, &dev_attr_parameter);
-	if (ret < 0)
-		dev_err(&lcd->ld->dev, "failed to add sysfs entries, %d\n", __LINE__);
-
 	ret = device_create_file(&lcd->ld->dev, &dev_attr_aid_log);
 	if (ret < 0)
 		dev_err(&lcd->ld->dev, "failed to add sysfs entries, %d\n", __LINE__);
@@ -1316,12 +1310,14 @@ static int ea8061v_probe(struct mipi_dsim_device *dsim)
 	mutex_init(&lcd->lock);
 	mutex_init(&lcd->bl_lock);
 
-	ea8061v_update_seq(lcd);
 	ea8061v_read_id(lcd, lcd->id);
+	msleep(20);
+	ea8061v_update_seq(lcd);
 	ea8061v_read_coordinate(lcd);
+	msleep(20);
 	ea8061v_read_mtp(lcd, mtp_data);
+	msleep(20);
 	ea8061v_read_elvss(lcd, elvss_data);
-	ea8061v_read_tset(lcd);
 
 	pr_info("[OCTA] Panel ID : %x, %x, %x\n", lcd->id[0], lcd->id[1], lcd->id[2]);
 
@@ -1330,7 +1326,6 @@ static int ea8061v_probe(struct mipi_dsim_device *dsim)
 	ret = init_gamma_table(lcd, mtp_data);
 	ret += init_aid_dimming_table(lcd, mtp_data);
 	ret += init_elvss_table(lcd, elvss_data);
-	//ret += init_tset_table(lcd, tset_data);
 	ret += init_hbm_parameter(lcd, mtp_data, elvss_data);
 
 	printk("ea8061v_probe ret value =%d\n", ret);

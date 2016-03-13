@@ -447,9 +447,29 @@ config RT_FLASH_LED
 
 config FLED_RT5033
 	tristate "Richtek RT5033 flash LED driver"
-	depends on FLASHLIGHT && MFD_RT5033
+	depends on RT_FLASH_LED && MFD_RT5033
 	help
 	  A driver for Richtek RT5033 flash LED
+choice
+	prompt "Control method"
+	depends on FLED_RT5033
+	default FLED_RT5033_I2C
+	help
+	  Choose which control signal to use for enabling/disabling torch and flash light.
+
+config FLED_RT5033_I2C
+	bool "I2C"
+	help
+	  Use I2C to enable/disable torch and flash light.
+	  If unsure, say N.
+
+config FLED_RT5033_EXT_GPIO
+	bool "External(or ISP) GPIO"
+	help
+	  Use GPIO pins to enable/disable torch and flash light.
+	  If unsure, say N.
+
+endchoice
 
 comment "LED Triggers"
 

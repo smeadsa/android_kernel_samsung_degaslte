@@ -40,6 +40,12 @@
 #define MAX_GIDAC_NODES 32
 #define MAX_LIDAC_NODES (MAX_GIDAC_NODES * 30)
 
+#define RECAL_FALSELY_CALED_PANEL
+#define SPEC_MUT_RAW_MIN (-19500)
+#define SPEC_MUT_RAW_MAX (5008)
+#define SPEC_SELF_RAW_MIN (-20000)
+#define SPEC_SELF_RAW_MAX (20000)
+
 extern struct class *sec_class;
 
 enum {
@@ -90,6 +96,8 @@ static void clear_cover_mode(void *device_data);
 static void fast_glove_mode(void *device_data);
 static void baseline_reset(void *device_data);
 static void report_rate(void *device_data);
+static void stylus_enable(void *device_data);
+static void reset_and_calibrate(void *device_data);
 static void not_support_cmd(void *device_data);
 
 /************************************************************************
@@ -123,6 +131,8 @@ struct factory_cmd factory_cmds[] = {
 	{FACTORY_CMD("fast_glove_mode", fast_glove_mode),},
 	{FACTORY_CMD("baseline_reset", baseline_reset),},
 	{FACTORY_CMD("report_rate", report_rate),},
+	{FACTORY_CMD("stylus_enable", stylus_enable),},
+	{FACTORY_CMD("reset_and_calibrate", reset_and_calibrate),},
 	{FACTORY_CMD("not_support_cmd", not_support_cmd),},
 };
 
@@ -514,136 +524,6 @@ static void get_difference(void *device_data)
 	get_raw_diff(sfd, &sfd->diff);
 }
 
-static void find_max_min_s16(u8* buf, int num_nodes, s16 *max_value, s16 *min_value)
-{
-	int i;
-	*max_value = 0x8000;
-	*min_value = 0x7FFF;
-
-	for (i = 0 ; i < num_nodes ; i++) {
-		*max_value = max((s16)*max_value, (s16)get_unaligned_le16(buf));
-		*min_value = min((s16)*min_value, (s16)get_unaligned_le16(buf));
-		buf += 2;
-	}
-}
-static void find_max_min_s8(u8* buf, int num_nodes, s16 *max_value, s16 *min_value)
-{
-	int i;
-	*max_value = 0x8000;
-	*min_value = 0x7FFF;
-
-	for (i = 0 ; i < num_nodes ; i++) {
-		*max_value = max((s8)*max_value, (s8)(*buf));
-		*min_value = min((s8)*min_value, (s8)(*buf));
-		buf += 1;
-	}
-}
-
-static int retrieve_panel_scan(struct cyttsp5_samsung_factory_data* sfd,
-		u8* buf, u8 data_id, int num_nodes, u8* r_element_size/*in bytes*/)
-{
-	int rc = 0;
-	int elem = num_nodes;
-	int elem_offset = 0;
-	u16 actual_read_len;
-	u8 config;
-	u16 length;
-	u8 *buf_offset;
-	u8 element_size = 0;
-
-	/* fill buf with header and data */
-	rc = sfd->corecmd->cmd->retrieve_panel_scan(sfd->dev, 0, elem_offset, elem,
-		data_id, buf, &config, &actual_read_len, NULL);
-	if (rc < 0)
-		goto end;
-
-	length = get_unaligned_le16(buf);
-	buf_offset = buf + length;
-
-	element_size = config & CY_CMD_RET_PANEL_ELMNT_SZ_MASK;
-	*r_element_size = element_size;
-
-	elem -= actual_read_len;
-	elem_offset = actual_read_len;
-	while (elem > 0) {
-		/* append data to the buf */
-		rc = sfd->corecmd->cmd->retrieve_panel_scan(sfd->dev, 0, elem_offset, elem,
-				data_id, NULL, &config, &actual_read_len, buf_offset);
-		if (rc < 0)
-			goto end;
-
-		if (!actual_read_len)
-			break;
-
-		length += actual_read_len * element_size;
-		buf_offset = buf + length;
-		elem -= actual_read_len;
-		elem_offset += actual_read_len;
-	}
-end:
-	return rc;
-}
-
-static int panel_scan_and_retrieve(struct cyttsp5_samsung_factory_data* sfd,
-		u8 data_id, struct cyttsp5_sfd_panel_scan_data *panel_scan_data)
-{
-	struct device *dev = sfd->dev;
-	int rc = 0;
-
-	tsp_debug_dbg(false, sfd->dev, "%s, line=%d\n", __func__, __LINE__ );
-
-	rc = cyttsp5_request_exclusive(dev, CY_REQUEST_EXCLUSIVE_TIMEOUT);
-	if (rc < 0) {
-		tsp_debug_err(true, dev, "%s: request exclusive failed(%d)\n",
-			__func__, rc);
-		return rc;
-	}
-
-	rc = sfd->corecmd->cmd->suspend_scanning(dev, 0);
-	if (rc < 0) {
-		tsp_debug_err(true, dev, "%s: suspend scanning failed r=%d\n",
-			__func__, rc);
-		goto release_exclusive;
-	}
-
-	rc = sfd->corecmd->cmd->exec_panel_scan(dev, 0);
-	if (rc < 0) {
-		tsp_debug_err(true, dev, "%s: exec panel scan failed r=%d\n",
-			__func__, rc);
-		goto release_exclusive;
-	}
-
-	rc = retrieve_panel_scan(sfd, panel_scan_data->buf, data_id,
-		sfd->num_all_nodes, &panel_scan_data->element_size);
-	if (rc < 0) {
-		tsp_debug_err(true, dev,
-			"%s: retrieve_panel_scan raw count failed r=%d\n",
-			__func__, rc);
-		goto release_exclusive;
-	}
-
-	if (panel_scan_data->element_size == 2)
-		find_max_min_s16(panel_scan_data->buf + CY_CMD_RET_PANEL_HDR,
-			sfd->num_all_nodes, &panel_scan_data->max, &panel_scan_data->min);
-	else
-		find_max_min_s8(panel_scan_data->buf + CY_CMD_RET_PANEL_HDR,
-			sfd->num_all_nodes, &panel_scan_data->max, &panel_scan_data->min);
-
-	rc = sfd->corecmd->cmd->resume_scanning(dev, 0);
-	if (rc < 0) {
-		tsp_debug_err(true, dev, "%s: resume_scanning failed r=%d\n",
-			__func__, rc);
-	}
-
-release_exclusive:
-	rc = cyttsp5_release_exclusive(dev);
-	if (rc < 0)
-		tsp_debug_err(true, dev, "%s: release_exclusive failed r=%d\n",
-			__func__, rc);
-
-	return rc;
-}
-
 static void run_raw_count_read(void *device_data)
 {
 	struct cyttsp5_samsung_factory_data* sfd =
@@ -653,7 +533,42 @@ static void run_raw_count_read(void *device_data)
 
 	set_default_result(sfd);
 
-	rc = panel_scan_and_retrieve(sfd, CY_MUT_RAW, &sfd->raw);
+#ifdef RECAL_FALSELY_CALED_PANEL
+	rc = cyttsp5_panel_scan_and_retrieve(sfd->dev, CY_SELF_RAW, &sfd->raw);
+	if (rc == 0) {
+		tsp_debug_info(true, sfd->dev, "%s: self min:%d,max:%d\n",
+			__func__, sfd->raw.min, sfd->raw.max);
+		if (sfd->raw.min < SPEC_SELF_RAW_MIN || SPEC_SELF_RAW_MAX < sfd->raw.max) {
+			tsp_debug_info(true, sfd->dev, "%s: selfcap wrong\n",
+				__func__);
+#if !defined(CY_TEST_RAW_READ_WITHOUT_CAL)
+			rc = cyttsp5_fw_calibrate(sfd->dev);
+			if (rc < 0)
+				tsp_debug_err(true, sfd->dev, "%s: calibration fail, rc=%d\n",
+				__func__, rc);
+#endif
+		}
+	}
+	rc = cyttsp5_panel_scan_and_retrieve(sfd->dev, CY_MUT_RAW, &sfd->raw);
+	if (rc == 0) {
+		tsp_debug_info(true, sfd->dev, "%s: mutual min:%d,max:%d\n",
+			__func__, sfd->raw.min, sfd->raw.max);
+		if (sfd->raw.min < SPEC_MUT_RAW_MIN || SPEC_MUT_RAW_MAX < sfd->raw.max) {
+			tsp_debug_info(true, sfd->dev, "%s: mutualcap wrong\n",
+				__func__);
+#if !defined(CY_TEST_RAW_READ_WITHOUT_CAL)
+			rc = cyttsp5_fw_calibrate(sfd->dev);
+			if (rc < 0)
+				tsp_debug_err(true, sfd->dev, "%s: calibration fail, rc=%d\n",
+				__func__, rc);
+
+			rc = cyttsp5_panel_scan_and_retrieve(sfd->dev, CY_MUT_RAW, &sfd->raw);
+#endif
+		}
+	}
+#else
+	rc = cyttsp5_panel_scan_and_retrieve(sfd->dev, CY_MUT_RAW, &sfd->raw);
+#endif
 	if (rc == 0) {
 		snprintf(strbuff, sizeof(strbuff), "%d,%d", sfd->raw.min, sfd->raw.max);
 		sfd->factory_cmd_state = FACTORYCMD_OK;
@@ -687,7 +602,7 @@ static void run_difference_read(void *device_data)
 
 	set_default_result(sfd);
 
-	rc = panel_scan_and_retrieve(sfd, CY_MUT_DIFF, &sfd->diff);
+	rc = cyttsp5_panel_scan_and_retrieve(sfd->dev, CY_MUT_DIFF, &sfd->diff);
 	if (rc == 0) {
 		snprintf(strbuff, sizeof(strbuff), "%d,%d", sfd->diff.min, sfd->diff.max);
 		sfd->factory_cmd_state = FACTORYCMD_OK;
@@ -820,10 +735,10 @@ static void get_local_idac(void *device_data)
 
 	set_default_result(sfd);
 
-	if (sfd->factory_cmd_param[0] < 0 ||
-		sfd->factory_cmd_param[0] >= sti->gidac_nodes ||
-		sfd->factory_cmd_param[1] < 0 ||
-		sfd->factory_cmd_param[1] >= sti->rx_nodes) {
+	if (sfd->factory_cmd_param[1] < 0 ||
+		sfd->factory_cmd_param[1] >= sti->gidac_nodes ||
+		sfd->factory_cmd_param[0] < 0 ||
+		sfd->factory_cmd_param[0] >= sti->rx_nodes) {
 		tsp_debug_err(true, sfd->dev,
 			"%s: parameter wrong param[0]=%d param[1]=%d\n", __func__,
 			sfd->factory_cmd_param[0], sfd->factory_cmd_param[1]);
@@ -834,9 +749,9 @@ static void get_local_idac(void *device_data)
 		sfd->factory_cmd_state = FACTORYCMD_FAIL;
 	} else {
 		u16 node =
-			sfd->factory_cmd_param[1] +
+			sfd->factory_cmd_param[0] +
 			sti->rx_nodes *
-			sfd->factory_cmd_param[0];
+			sfd->factory_cmd_param[1];
 
 		value = buf[node];
 
@@ -945,6 +860,9 @@ static void run_local_idac_read(void *device_data)
 	run_idac_read(sfd, IDAC_LOCAL);
 }
 
+/************************************************************************
+ * check rc
+ ************************************************************************/
 static inline void _check_rc(struct cyttsp5_samsung_factory_data* sfd,
 	int rc)
 {
@@ -1031,14 +949,16 @@ static void baseline_reset(void *device_data)
 	set_default_result(sfd);
 
 	if (sfd->suspended) {
+		tsp_debug_err(true, sfd->dev, "%s: device is suspended\n", __func__);
+		rc = -EIO;
 		goto check_rc;
-	} else {
-		rc = initialize_baselines(sfd);
-		if (rc) {
-			tsp_debug_err(true, sfd->dev, "%s: error on initialize_baselines\n",
-				__func__);
-			goto check_rc;
-		}
+	}
+
+	rc = initialize_baselines(sfd);
+	if (rc) {
+		tsp_debug_err(true, sfd->dev, "%s: error on initialize_baselines\n",
+			__func__);
+		goto check_rc;
 	}
 
 check_rc:
@@ -1046,18 +966,54 @@ check_rc:
 }
 
 /************************************************************************
- * commands - Hover, Glove
+ * reset and calibrate
+ ************************************************************************/
+static void reset_and_calibrate(void *device_data)
+{
+	struct cyttsp5_samsung_factory_data* sfd =
+		(struct cyttsp5_samsung_factory_data *) device_data;
+	int rc = 0;
+
+	pr_debug("%s: \n", __func__);
+
+	if (!sfd->probe_done) {
+		pr_debug("%s: probe is not done\n", __func__);
+		return;
+	}
+
+	set_default_result(sfd);
+
+	if (sfd->suspended) {
+		tsp_debug_err(true, sfd->dev, "%s: device is suspended\n", __func__);
+		rc = -EIO;
+		goto check_rc;
+	}
+
+	rc = sfd->corecmd->request_restart(sfd->dev);
+	if (rc) {
+		tsp_debug_err(true, sfd->dev, "%s: error on request_restart\n",
+			__func__);
+		goto check_rc;
+	}
+
+check_rc:
+	_check_rc(sfd, rc);
+}
+
+/************************************************************************
+ * commands - hover/glove/stylus
  ************************************************************************/
 #define PARAM_ID_TOUCH_MODE	0xD0
-#define SCAN_TYPE_FINGER	(1 << 0)
-#define SCAN_TYPE_GLOVE		(1 << 1)
-#define SCAN_TYPE_STYLUS	(1 << 2)
+#define PARAM_ID_VIEW_COVER_MODE 0xD3
+#define SCAN_TYPE_FINGER	(1 << 0)  // means nothing but set it always
+#define SCAN_TYPE_GLOVE		(1 << 1)  // high sensitivity mode
+#define SCAN_TYPE_STYLUS	(1 << 2)  // means nothing but set it always
 #define SCAN_TYPE_HOVER		(1 << 3)
 #define SCAN_TYPE_FINGER_PRIORITY (1 << 4)
 
 #define SCAN_TYPE_FINGER_ONLY 1
 #define SCAN_TYPE_STYLUS_ONLY 4
-#define SCAN_TYPE_FINGER_AND_STYLUS (5 | 16)
+#define SCAN_TYPE_FINGER_AND_STYLUS (5 | 16) // 21
 #define SCAN_TYPE_FINGER_AND_GLOVE 3
 #define SCAN_TYPE_FINGER_AND_HOVER 9
 #define SCAN_TYPE_FINGER_GLOVE_AND_STYLUS 7
@@ -1065,9 +1021,12 @@ check_rc:
 #define SCAN_TYPE_FULL_AUTO 15
 
 #ifdef SAMSUNG_TOUCH_MODE
-extern void cyttsp5_glove_enable(struct device *dev, bool enable);
+extern void cyttsp5_mt_glove_enable(struct device *dev, bool enable);
+extern void cyttsp5_mt_prevent_touch(struct device *dev, bool prevent);
+extern void cyttsp5_mt_stylus_enable(struct device *dev, bool enable);
 #endif
-static inline u32 get_touch_mode_value(bool hover, bool glove)
+static inline u32 get_touch_mode_value(bool hover,
+	bool glove/*high sensitivity mode*/)
 {
 	u32 value;
 
@@ -1083,11 +1042,39 @@ static inline u32 get_touch_mode_value(bool hover, bool glove)
 	return value;
 }
 
-static void hover_glove_switch(struct cyttsp5_samsung_factory_data* sfd,
-	bool change_hover_or_glove)
+static const char* get_touch_mode_str(u32 touch_mode)
 {
-	u32 value;
-	bool hover, glove;
+	switch (touch_mode) {
+	case SCAN_TYPE_FINGER_ONLY:
+	    return "F";
+	case SCAN_TYPE_STYLUS_ONLY:
+	    return "S";
+	case SCAN_TYPE_FINGER_AND_STYLUS:
+	    return "FS";
+	case SCAN_TYPE_FINGER_AND_GLOVE:
+	    return "FG";
+	case SCAN_TYPE_FINGER_AND_HOVER:
+	    return "FH";
+	case SCAN_TYPE_FINGER_GLOVE_AND_STYLUS:
+	    return "FGS";
+	case SCAN_TYPE_FINGER_STYLUS_AND_HOVER:
+	    return "FSH";
+	case SCAN_TYPE_FULL_AUTO:
+	    return "AUTO";
+	}
+	return "";
+}
+
+//-- TOUCH_MODE_SWITCH Commands
+#define CMD_HOVER_ENABLE		0
+#define CMD_GLOVE_MODE			1
+#define CMD_CLEAR_COVER_MODE	2
+#define CMD_FAST_GLOVE_MODE		3
+
+static void touch_mode_switch(struct cyttsp5_samsung_factory_data* sfd,
+	int command, int param_max)
+{
+	bool glove, hover;
 	int rc = 0;
 
 	if (!sfd->probe_done) {
@@ -1097,51 +1084,90 @@ static void hover_glove_switch(struct cyttsp5_samsung_factory_data* sfd,
 
 	set_default_result(sfd);
 
-	if (sfd->factory_cmd_param[0] < 0 || sfd->factory_cmd_param[0] > 1) {
+	if (sfd->factory_cmd_param[0] < 0 ||
+	    sfd->factory_cmd_param[0] > param_max) {
 		rc = -EINVAL;
-		tsp_debug_err(true, sfd->dev, "%s: invalid param\n", __func__);
+		tsp_debug_err(true, sfd->dev, "%s: parameter %d is wrong\n",
+			__func__, sfd->factory_cmd_param[0]);
 		goto check_rc;
 	}
+
+	tsp_debug_info(true, sfd->dev,
+		"%s: old touch mode=%s\n", __func__,
+		get_touch_mode_str(sfd->touch_mode));
+
+	hover = (sfd->touch_mode & SCAN_TYPE_HOVER) ? 1 : 0;
+	glove = (sfd->touch_mode & SCAN_TYPE_GLOVE) ? 1 : 0;
+	switch (command) {
+	case CMD_HOVER_ENABLE:
+		hover = sfd->factory_cmd_param[0];
+		break;
+	case CMD_GLOVE_MODE:
+	case CMD_FAST_GLOVE_MODE:
+		glove = sfd->factory_cmd_param[0];
+		break;
+	case CMD_CLEAR_COVER_MODE:
+		if (sfd->factory_cmd_param[0] != 2) {// not flip cover closed
+			glove = sfd->factory_cmd_param[0] == 0 ? 0 : 1;
+			sfd->view_cover_closed = (sfd->factory_cmd_param[0] == 3);
+		}
+		break;
+	}
+
+	sfd->touch_mode = get_touch_mode_value(hover, glove);
 
 	if (sfd->suspended) {
-		value = sfd->touch_mode;
-	} else {
-		rc = sfd->corecmd->cmd->get_param(sfd->dev, 1,
-			PARAM_ID_TOUCH_MODE, &value);
-		if (rc) {
-			tsp_debug_err(true, sfd->dev, "%s: error on get_param\n",
-				__func__);
-			goto check_rc;
-		}
-	}
-	tsp_debug_info(true, sfd->dev,
-		"%s: old touch mode=0x%08x\n", __func__, value);
-
-	if (change_hover_or_glove) {
-		hover = sfd->factory_cmd_param[0];
-		glove = (value & SCAN_TYPE_GLOVE) ? 1 : 0;
-	} else {
-		glove = sfd->factory_cmd_param[0];
-		hover = (value & SCAN_TYPE_HOVER) ? 1 : 0;
-	}
-	value = get_touch_mode_value(hover, glove);
-	sfd->touch_mode = value;
-	tsp_debug_info(true, sfd->dev, "%s: new touch mode=0x%08x\n", __func__, value);
-
-	if (sfd->suspended)
+		tsp_debug_err(true, sfd->dev, "%s: device is suspended\n", __func__);
 		goto check_rc;
+	}
 
-	rc = sfd->corecmd->cmd->set_param(sfd->dev, 1,
-		PARAM_ID_TOUCH_MODE, value);
+	rc = cyttsp5_request_exclusive(sfd->dev, CY_REQUEST_EXCLUSIVE_TIMEOUT_SET_PARAM);
+	if (rc < 0) {
+		tsp_debug_err(true, sfd->dev, "%s: request exclusive failed(%d)\n",
+			__func__, rc);
+		goto check_rc;
+	}
+
+	if (command == CMD_CLEAR_COVER_MODE &&
+		sfd->factory_cmd_param[0] == 2) {// flip cover closed
+		cyttsp5_mt_prevent_touch(sfd->dev, 1);
+		goto skip_touch_mode_glove_setting;
+	}
+
+//-- touch mode
+	rc = sfd->corecmd->cmd->set_param(sfd->dev, 0,
+		PARAM_ID_TOUCH_MODE, sfd->touch_mode);
 	if (rc) {
 		tsp_debug_err(true, sfd->dev,
-			"%s: error on set_param\n", __func__);
-		goto check_rc;
+			"%s: error on set_param touch mode\n", __func__);
+		goto release_exclusive;
+	}
+	tsp_debug_info(true, sfd->dev,
+			"%s: new touch mode=%s\n", __func__,
+			get_touch_mode_str(sfd->touch_mode));
+	cyttsp5_mt_glove_enable(sfd->dev, glove);
+skip_touch_mode_glove_setting:
+
+//-- view cover mode
+	if (command == CMD_CLEAR_COVER_MODE &&
+		sfd->factory_cmd_param[0] != 2) { // !flip cover closed
+		rc = sfd->corecmd->cmd->set_param(sfd->dev, 0,
+			PARAM_ID_VIEW_COVER_MODE,
+			sfd->view_cover_closed);
+		if (rc) {
+			tsp_debug_err(true, sfd->dev,
+				"%s: error on set_param view cover mode\n", __func__);
+			goto release_exclusive;
+		}
+		tsp_debug_info(true, sfd->dev, "%s: view_cover_closed=%d\n",
+			__func__, sfd->view_cover_closed);
+		cyttsp5_mt_prevent_touch(sfd->dev, 0);
 	}
 
-	if (!change_hover_or_glove)
-		cyttsp5_glove_enable(sfd->dev, sfd->factory_cmd_param[0]);
-
+release_exclusive:
+	if (cyttsp5_release_exclusive(sfd->dev) < 0)
+		tsp_debug_err(true, sfd->dev, "%s: release_exclusive failed\n",
+			__func__);
 check_rc:
 	_check_rc(sfd, rc);
 }
@@ -1150,166 +1176,42 @@ static void hover_enable(void *device_data)
 {
 	struct cyttsp5_samsung_factory_data* sfd =
 		(struct cyttsp5_samsung_factory_data *) device_data;
-	hover_glove_switch(sfd, 1/*change hover*/);
+	touch_mode_switch(sfd, CMD_HOVER_ENABLE, 1);
 }
 
 static void glove_mode(void *device_data)
 {
 	struct cyttsp5_samsung_factory_data* sfd =
 		(struct cyttsp5_samsung_factory_data *) device_data;
-	hover_glove_switch(sfd, 0/*change glove*/);
+	touch_mode_switch(sfd, CMD_GLOVE_MODE, 1);
 }
 
-int cyttsp5_prevent_touch(struct device *dev, bool prevent);
 static void clear_cover_mode(void *device_data)
 {
 	struct cyttsp5_samsung_factory_data* sfd =
 		(struct cyttsp5_samsung_factory_data *) device_data;
-	bool glove, hover;
-	u32 value;
-	int rc = 0;
-
-	if (!sfd->probe_done) {
-		pr_debug("%s: probe is not done\n", __func__);
-		return;
-	}
-
-	set_default_result(sfd);
-
-	if (sfd->factory_cmd_param[0] < 0 || sfd->factory_cmd_param[0] > 3) {
-		rc = -EINVAL;
-		tsp_debug_err(true, sfd->dev, "%s: invalid param\n", __func__);
-		goto check_rc;
-	}
-
-	if (sfd->suspended) {
-		value = sfd->touch_mode;
-	} else {
-		rc = sfd->corecmd->cmd->get_param(sfd->dev, 1,
-			PARAM_ID_TOUCH_MODE, &value);
-		if (rc) {
-			tsp_debug_err(true, sfd->dev,
-				"%s: error on get_param\n", __func__);
-			goto check_rc;
-		}
-	}
-	tsp_debug_info(true, sfd->dev,
-		"%s: old touch mode=0x%08x\n", __func__, value);
-
-	hover = (value & SCAN_TYPE_HOVER) ? 1 : 0;
-
-	switch (sfd->factory_cmd_param[0]) {
-	case 0:
-	case 1:
-	case 3:
-		glove = (sfd->factory_cmd_param[0] == 1 ||
-		         sfd->factory_cmd_param[0] == 3) ?
-				 1 : 0;
-		value = get_touch_mode_value(hover, glove);
-		sfd->touch_mode = value;
-		tsp_debug_info(true, sfd->dev,
-			"%s: new touch mode=0x%08x\n", __func__, value);
-
-		if (sfd->suspended)
-			goto check_rc;
-
-		rc = sfd->corecmd->cmd->set_param(sfd->dev, 1,
-			PARAM_ID_TOUCH_MODE, value);
-		if (rc) {
-			tsp_debug_err(true, sfd->dev,
-				"%s: error on set_param\n", __func__);
-			goto check_rc;
-		}
-		rc = initialize_baselines(sfd);
-		if (rc) {
-			tsp_debug_err(true, sfd->dev,
-				"%s: error on initialize_baselines\n", __func__);
-			goto check_rc;
-		}
-
-		cyttsp5_glove_enable(sfd->dev, glove);
-
-		cyttsp5_prevent_touch(sfd->dev, 0);
-		break;
-	case 2:
-		cyttsp5_prevent_touch(sfd->dev, 1);
-		break;
-	}
-
-check_rc:
-	_check_rc(sfd, rc);
+	touch_mode_switch(sfd, CMD_CLEAR_COVER_MODE, 3);
 }
 
 static void fast_glove_mode(void *device_data)
 {
 	struct cyttsp5_samsung_factory_data* sfd =
 		(struct cyttsp5_samsung_factory_data *) device_data;
+	touch_mode_switch(sfd, CMD_FAST_GLOVE_MODE, 1);
+}
+
+static void stylus_enable(void *device_data)
+{
+	struct cyttsp5_samsung_factory_data* sfd =
+		(struct cyttsp5_samsung_factory_data *) device_data;
 	bool glove, hover;
-	u32 value;
+	u32 touch_mode;
 	int rc = 0;
 
 	if (!sfd->probe_done) {
 		pr_debug("%s: probe is not done\n", __func__);
 		return;
 	}
-
-	set_default_result(sfd);
-
-	if (sfd->factory_cmd_param[0] < 0 || sfd->factory_cmd_param[0] > 1) {
-		rc = -EINVAL;
-		tsp_debug_err(true, sfd->dev, "%s: invalid param\n", __func__);
-		goto check_rc;
-	}
-
-	if (sfd->suspended) {
-		value = sfd->touch_mode;
-	} else {
-		rc = sfd->corecmd->cmd->get_param(sfd->dev, 1,
-			PARAM_ID_TOUCH_MODE, &value);
-		if (rc) {
-			tsp_debug_err(true, sfd->dev,
-				"%s: error on get_param\n", __func__);
-			goto check_rc;
-		}
-	}
-	tsp_debug_info(true, sfd->dev,
-		"%s: old touch mode=0x%08x\n", __func__, value);
-
-	hover = (value & SCAN_TYPE_HOVER) ? 1 : 0;
-	glove = (sfd->factory_cmd_param[0] == 1) ? 1 : 0;
-
-	value = get_touch_mode_value(hover, glove);
-	sfd->touch_mode = value;
-	tsp_debug_info(true, sfd->dev,
-		"%s: new touch mode=0x%08x\n", __func__, value);
-
-	if (sfd->suspended)
-		goto check_rc;
-
-	rc = sfd->corecmd->cmd->set_param(sfd->dev, 1,
-		PARAM_ID_TOUCH_MODE, value);
-	if (rc) {
-		tsp_debug_err(true, sfd->dev, "%s: error on set_param\n", __func__);
-		goto check_rc;
-	}
-
-	cyttsp5_glove_enable(sfd->dev, glove);
-
-check_rc:
-	_check_rc(sfd, rc);
-}
-
-/************************************************************************
- * report_rate
- ************************************************************************/
-#define PARAM_ID_ACT_INTRVL0 0x4D
-#define PARAM_ID_LP_INTRVL0	 0x4C
-static void report_rate(void *device_data)
-{
-	struct cyttsp5_samsung_factory_data* sfd =
-		(struct cyttsp5_samsung_factory_data *) device_data;
-	u32 interval;
-	int rc = 0;
 
 	set_default_result(sfd);
 
@@ -1322,17 +1224,54 @@ static void report_rate(void *device_data)
 		goto check_rc;
 	}
 
-#if 0
-	rc = sfd->corecmd->cmd->get_param(sfd->dev, 1,
-		PARAM_ID_ACT_INTRVL0, &interval);
+	sfd->stylus_enable = sfd->factory_cmd_param[0] ? true : false;
+
+	rc = cyttsp5_request_exclusive(sfd->dev, CY_REQUEST_EXCLUSIVE_TIMEOUT_SET_PARAM);
 	if (rc < 0) {
-		tsp_debug_err(true, sfd->dev, "%s: get_param failed\n", __func__);
+		tsp_debug_err(true, sfd->dev, "%s: request exclusive failed(%d)\n",
+			__func__, rc);
 		goto check_rc;
 	}
-	tsp_debug_dbg(false, sfd->dev, "%s: internal=%d\n", __func__, interval);
-#endif
 
-	switch (sfd->factory_cmd_param[0]) {
+	hover = (sfd->touch_mode & SCAN_TYPE_HOVER) ? 1 : 0;
+	glove = (sfd->touch_mode & SCAN_TYPE_GLOVE) ? 1 : 0;
+	// glove off -> stylus on -> stylus off : glove needs to be off.
+	// glove on -> stylus on -> stylus off : glove needs to be on.
+	if (!glove) {
+		touch_mode = get_touch_mode_value(hover,
+			sfd->stylus_enable/*high sensitivity mode*/);
+
+		rc = sfd->corecmd->cmd->set_param(sfd->dev, 0,
+			PARAM_ID_TOUCH_MODE, touch_mode);
+		if (rc)
+			tsp_debug_err(true, sfd->dev,
+				"%s: error on set_param touch mode\n", __func__);
+		else
+			tsp_debug_info(true, sfd->dev,
+				"%s: new touch mode=%s\n", __func__,
+				get_touch_mode_str(touch_mode));
+	}
+
+	cyttsp5_mt_stylus_enable(sfd->dev, sfd->stylus_enable);
+
+	if (cyttsp5_release_exclusive(sfd->dev) < 0)
+		tsp_debug_err(true, sfd->dev, "%s: release_exclusive failed\n",
+			__func__);
+check_rc:
+	_check_rc(sfd, rc);
+}
+
+/************************************************************************
+ * report_rate
+ ************************************************************************/
+#define PARAM_ID_ACT_INTRVL0 0x4D
+#define PARAM_ID_LP_INTRVL0	 0x4C
+static int report_rate_set_param(struct cyttsp5_samsung_factory_data* sfd)
+{
+	u32 interval;
+	int rc;
+
+	switch (sfd->report_rate) {
 	case 1:
 		interval = 17/*ms, 60Hz*/;
 		break;
@@ -1343,15 +1282,60 @@ static void report_rate(void *device_data)
 		interval = 10/*ms, 100Hz*/;
 		break;
 	}
-	rc = sfd->corecmd->cmd->set_param(sfd->dev, 1,
+
+	tsp_debug_dbg(false, sfd->dev, "%s: interval=%d\n", __func__,
+		interval);
+	rc = sfd->corecmd->cmd->set_param(sfd->dev, 0,
 		PARAM_ID_ACT_INTRVL0, interval);
 	if (rc)
 		tsp_debug_err(true, sfd->dev, "%s: error on set_param\n", __func__);
 
+	return rc;
+}
+
+static void report_rate(void *device_data)
+{
+	struct cyttsp5_samsung_factory_data* sfd =
+		(struct cyttsp5_samsung_factory_data *) device_data;
+	int rc = 0;
+
+	if (!sfd->probe_done) {
+		pr_debug("%s: probe is not done\n", __func__);
+		return;
+	}
+
+	set_default_result(sfd);
+
+	if (sfd->factory_cmd_param[0] < 0 ||
+		sfd->factory_cmd_param[0] > 2) {
+		tsp_debug_err(true, sfd->dev, "%s: parameter %d is wrong\n",
+			__func__, sfd->factory_cmd_param[0]);
+		rc = -EINVAL;
+		goto check_rc;
+	}
+
+	sfd->report_rate = sfd->factory_cmd_param[0];
+
+	if (sfd->suspended) {
+		tsp_debug_err(true, sfd->dev, "%s: device is suspended\n", __func__);
+		goto check_rc;
+	}
+
+	rc = cyttsp5_request_exclusive(sfd->dev, CY_REQUEST_EXCLUSIVE_TIMEOUT_SET_PARAM);
+	if (rc < 0) {
+		tsp_debug_err(true, sfd->dev, "%s: request exclusive failed(%d)\n",
+			__func__, rc);
+		goto check_rc;
+	}
+
+	rc = report_rate_set_param(sfd);
+
+	if (cyttsp5_release_exclusive(sfd->dev) < 0)
+		tsp_debug_err(true, sfd->dev, "%s: release_exclusive failed\n",
+			__func__);
 check_rc:
 	_check_rc(sfd, rc);
 }
-
 
 /************************************************************************
  * commands -
@@ -1530,10 +1514,22 @@ static struct attribute_group sec_touch_factory_attr_group = {
 /************************************************************************
  * suspend/resume
  ************************************************************************/
+/************************************************************************
+ * This function called with startup() finished startup procedure
+ * and having exclusive_access
+ ************************************************************************/
+#define PARAM_ID_TOUCH_MODE_DEFAULT SCAN_TYPE_FINGER_AND_STYLUS
+#define STYLUS_ENABLE_DEFAULT 0
+#define PARAM_ID_VIEW_COVER_MODE_DEFAULT 0
+#define PARAM_ID_REPORT_RATE_DEFAULT 0
+#define PARAM_ID_SEPERATE_VELOCITY_MODE_DEFAULT 0
+
 int cyttsp5_samsung_factory_startup_attention(struct device *dev)
 {
 	struct cyttsp5_core_data *cd = dev_get_drvdata(dev);
 	struct cyttsp5_samsung_factory_data *sfd = &cd->sfd;
+	u32 touch_mode;
+	bool hover, glove;
 	int rc;
 
 	if (!sfd->probe_done) {
@@ -1541,24 +1537,83 @@ int cyttsp5_samsung_factory_startup_attention(struct device *dev)
 		return 0;
 	}
 
-	tsp_debug_dbg(false, dev, "%s: \n", __func__);
+	tsp_debug_dbg(true, dev, "%s: \n", __func__);
 
-	sfd->suspended = 0;
-
-	rc = sfd->corecmd->cmd->set_param(sfd->dev, 1,
-		PARAM_ID_TOUCH_MODE, sfd->touch_mode);
-	if (rc) {
-		tsp_debug_err(true, sfd->dev, "%s: error on set_param rc=%d\n",
-			__func__, rc);
-	}
-	tsp_debug_dbg(false, sfd->dev, "%s: touch_mode=0x%02x\n", __func__,
-		sfd->touch_mode);
-
-	cyttsp5_glove_enable(sfd->dev,
+//-- glove enable
+	cyttsp5_mt_glove_enable(sfd->dev,
 		(sfd->touch_mode & SCAN_TYPE_GLOVE) ? 1 : 0);
+
+//-- stylus enable
+	if (sfd->stylus_enable == STYLUS_ENABLE_DEFAULT)
+		tsp_debug_dbg(true, sfd->dev,
+			"%s: stylus_enable %x is default value, bypass setting the mode\n",
+			__func__, sfd->stylus_enable);
+	else
+		cyttsp5_mt_stylus_enable(sfd->dev, sfd->stylus_enable);
+
+//-- touch mode
+	hover = (sfd->touch_mode & SCAN_TYPE_HOVER) ? 1 : 0;
+	glove = (sfd->touch_mode & SCAN_TYPE_GLOVE) ? 1 : 0;
+	if (sfd->stylus_enable)
+		glove = 1;
+	touch_mode = get_touch_mode_value(hover, glove);
+	if (touch_mode == PARAM_ID_TOUCH_MODE_DEFAULT)
+		tsp_debug_dbg(true, sfd->dev,
+			"%s: touch mode %s is default value, bypass set param\n",
+			__func__, get_touch_mode_str(touch_mode));
+	else {
+		rc = sfd->corecmd->cmd->set_param(sfd->dev, 0,
+			PARAM_ID_TOUCH_MODE, touch_mode);
+		if (rc) {
+			tsp_debug_err(true, sfd->dev, "%s: error on set touch mode rc=%d\n",
+				__func__, rc);
+			goto exit;
+		}
+		tsp_debug_dbg(true, sfd->dev, "%s: touch_mode=%s\n", __func__,
+			get_touch_mode_str(touch_mode));
+	}
+
+//-- view cover mode
+	if (sfd->view_cover_closed == PARAM_ID_VIEW_COVER_MODE_DEFAULT)
+		tsp_debug_dbg(true, sfd->dev,
+			"%s: view cover mode %x is default value, bypass set param\n",
+			__func__, sfd->view_cover_closed);
+	else {
+		rc = sfd->corecmd->cmd->set_param(sfd->dev, 0,
+			PARAM_ID_VIEW_COVER_MODE,
+			sfd->view_cover_closed);
+		if (rc) {
+			tsp_debug_err(true, sfd->dev,
+				"%s: error on set_param view cover mode\n", __func__);
+			goto exit;
+		}
+		tsp_debug_info(true, sfd->dev, "%s: view_cover_closed=%d\n",
+			__func__, sfd->view_cover_closed);
+	}
+
+//-- report rate
+	if (sfd->report_rate == PARAM_ID_REPORT_RATE_DEFAULT)
+		tsp_debug_dbg(true, sfd->dev,
+			"%s: report_rate %x is default value, bypass set param\n",
+			__func__, sfd->report_rate);
+	else {
+		rc = report_rate_set_param(sfd);
+		if (rc) {
+			tsp_debug_err(true, sfd->dev, "%s: error on set report rate rc=%d\n",
+				__func__, rc);
+		}
+		tsp_debug_info(true, sfd->dev, "%s: report rate=%d\n",
+			__func__, sfd->report_rate);
+	}
+
+exit:
+	sfd->suspended = 0;
 	return rc;
 }
 
+/************************************************************************
+ * This function is called with sleep() having exclusive access
+ ************************************************************************/
 int cyttsp5_samsung_factory_suspend_attention(struct device *dev)
 {
 	struct cyttsp5_core_data *cd = dev_get_drvdata(dev);
@@ -1652,7 +1707,7 @@ int cyttsp5_samsung_factory_probe(struct device *dev)
 		MKDEV(SEC_DEV_TOUCH_MAJOR, SEC_DEV_TSP_MINOR), sfd, "tsp");
 	if (IS_ERR(sfd->factory_dev)) {
 		tsp_debug_err(true, sfd->dev, "Failed to create device for the sysfs\n");
-		goto error_device_create;
+		goto error_device_create_factory_dev;
 	}
 	tsp_debug_dbg(false, dev, "%s sfd->factory_dev->devt=%d\n",
 		__func__, sfd->factory_dev->devt);
@@ -1662,7 +1717,7 @@ int cyttsp5_samsung_factory_probe(struct device *dev)
 	if (rc) {
 		tsp_debug_err(true, sfd->dev, "Failed to create sysfs group\n");
 		goto error_sysfs_create_group;
-	}
+	}	rc = sysfs_create_link(&sfd->factory_dev->kobj,		&cd->md.input->dev.kobj, "input");	if (rc < 0) {		tsp_debug_err(true, sfd->dev, "Failed to create symbolic link\n");	}
 
 	sfd->sysfs_nodes_created = true;
 
@@ -1671,9 +1726,15 @@ int cyttsp5_samsung_factory_probe(struct device *dev)
 	if (rc) {
 		tsp_debug_err(true, dev, "%s: get_param failed r=%d\n",
 			__func__, rc);
+		sfd->touch_mode = PARAM_ID_TOUCH_MODE_DEFAULT;
 	}
-	tsp_debug_dbg(false, sfd->dev, "%s: touch_mode=0x%02x\n", __func__,
-		sfd->touch_mode);
+	tsp_debug_dbg(true, sfd->dev, "%s: touch_mode=%s\n", __func__,
+		get_touch_mode_str(sfd->touch_mode));
+
+	sfd->stylus_enable = STYLUS_ENABLE_DEFAULT;
+	sfd->view_cover_closed = PARAM_ID_VIEW_COVER_MODE_DEFAULT;
+	sfd->report_rate = PARAM_ID_REPORT_RATE_DEFAULT;
+	sfd->is_inputmethod = PARAM_ID_SEPERATE_VELOCITY_MODE_DEFAULT;
 
 	sfd->probe_done = 1;
 	tsp_debug_dbg(true, sfd->dev, "%s: success. rc=%d\n", __func__, rc);
@@ -1681,7 +1742,7 @@ int cyttsp5_samsung_factory_probe(struct device *dev)
 
 error_sysfs_create_group:
 	device_destroy(sec_class, sfd->factory_dev->devt);
-error_device_create:
+error_device_create_factory_dev:
 	kfree(sfd->mutual_idac.buf);
 error_alloc_idac_buf:
 	kfree(sfd->diff.buf);
@@ -1703,6 +1764,7 @@ int cyttsp5_samsung_factory_release(struct device *dev)
 		tsp_debug_dbg(false, dev, "%s sfd->factory_dev->devt=%d\n",
 			__func__, sfd->factory_dev->devt);
 		device_destroy(sec_class, sfd->factory_dev->devt);
+
 		kfree(sfd->mutual_idac.buf);
 		kfree(sfd->diff.buf);
 		kfree(sfd->raw.buf);

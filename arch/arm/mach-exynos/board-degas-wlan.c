@@ -52,11 +52,20 @@ struct wlan_mem_prealloc {
 };
 
 #if defined(CONFIG_ARM_EXYNOS3470_BUS_DEVFREQ)
+#if defined(CONFIG_BCM4334)
+static struct dw_mci_mon_table exynos_dwmci_tp_mon1_tbl[] = {
+        /* Byte/s, MIF clk, CPU clk */
+        {  6000000, 400000, 1200000},
+        {  3000000,      0,  800000},
+        {        0,      0,       0},
+};
+#else
 static struct dw_mci_mon_table exynos_dwmci_tp_mon1_tbl[] = {
         /* Byte/s, MIF clk, CPU clk */
         {  9000000, 400000, 1300000},
         {         0,      0,       0},
 };
+#endif
 #endif
 
 static struct wlan_mem_prealloc wlan_mem_array[PREALLOC_WLAN_SEC_NUM] = {
@@ -203,15 +212,24 @@ static struct wifi_gpio_sleep_data brcm_wifi_sleep_gpios[] = {
 };
 
 static void (*wifi_status_cb)(struct platform_device *, int state);
-static void *wifi_mmc_host; 
+#if defined(CONFIG_BCM4334) || defined(CONFIG_BCM4334_MODULE)
+static void *wifi_mmc_host;
 extern void mmc_ctrl_power(struct mmc_host *host, bool onoff);
+#endif
 
+#if defined(CONFIG_BCM4334) || defined(CONFIG_BCM4334_MODULE)
 static int ext_cd_init_wlan(
 	void (*notify_func)(struct platform_device *, int), void *mmc_host)
+#else
+static int ext_cd_init_wlan(
+	void (*notify_func)(struct platform_device *, int))
+#endif
 {
 	pr_debug("SCSC: registered CD callback\n");
 	wifi_status_cb = notify_func;
+#if defined(CONFIG_BCM4334) || defined(CONFIG_BCM4334_MODULE)
 	wifi_mmc_host = mmc_host;
+#endif
 	return 0;
 }
 
@@ -278,8 +296,10 @@ static int brcm_wlan_power(int on)
 
 	brcm_wifi_ctrl_lock();
 
+#if defined(CONFIG_BCM4334) || defined(CONFIG_BCM4334_MODULE)
 	/* Set init CLK if WIFI is turn off */
 	mmc_ctrl_power((struct mmc_host *)wifi_mmc_host,on);
+#endif
 
 	if (on) {
 		gpio_set_value(GPIO_WLAN_EN, 0);
@@ -431,10 +451,7 @@ static void exynos_dwmci1_cfg_gpio(int width)
 	for (gpio = EXYNOS4_GPK1(0); gpio < EXYNOS4_GPK1(3); gpio++) {
 		s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
 		s3c_gpio_setpull(gpio, S3C_GPIO_PULL_UP);
-		if (gpio == EXYNOS4_GPK1(0))
-			s5p_gpio_set_drvstr(gpio, S5P_GPIO_DRVSTR_LV3);
-		else
-		s5p_gpio_set_drvstr(gpio, S5P_GPIO_DRVSTR_LV4);
+		s5p_gpio_set_drvstr(gpio, S5P_GPIO_DRVSTR_LV2);
 	}
 
 	switch (width) {
@@ -444,22 +461,14 @@ static void exynos_dwmci1_cfg_gpio(int width)
 				gpio <= EXYNOS4_GPK1(6); gpio++) {
 			s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
 			s3c_gpio_setpull(gpio, S3C_GPIO_PULL_UP);
-			s5p_gpio_set_drvstr(gpio, S5P_GPIO_DRVSTR_LV4);
+			s5p_gpio_set_drvstr(gpio, S5P_GPIO_DRVSTR_LV2);
 		}
-
-		for (gpio = EXYNOS4_GPD1(4);
-				gpio <= EXYNOS4_GPD1(7); gpio++) {
-			s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
-			s3c_gpio_setpull(gpio, S3C_GPIO_PULL_UP);
-			s5p_gpio_set_drvstr(gpio, S5P_GPIO_DRVSTR_LV4);
-		}
-
 		break;
 	case 1:
 		gpio = EXYNOS4_GPK1(3);
 		s3c_gpio_cfgpin(gpio, S3C_GPIO_SFN(2));
 		s3c_gpio_setpull(gpio, S3C_GPIO_PULL_UP);
-		s5p_gpio_set_drvstr(gpio, S5P_GPIO_DRVSTR_LV4);
+		s5p_gpio_set_drvstr(gpio, S5P_GPIO_DRVSTR_LV2);
 	default:
 		break;
 	}
@@ -476,11 +485,16 @@ static struct dw_mci_board smdk4270_dwmci1_pdata __initdata = {
 #else
 	.bus_hz		= 50 * 1000 * 1000,
 #endif /* CONFIG_BCM4335 || CONFIG_BCM4335_MODULE */
+
+#if defined(CONFIG_BCM4334) || defined(CONFIG_BCM4334_MODULE)
+	.caps		= MMC_CAP_4_BIT_DATA,
+#elif defined(CONFIG_BCM4335) || defined(CONFIG_BCM4335_MODULE)
 	.caps		= MMC_CAP_4_BIT_DATA |
-#if defined(CONFIG_BCM4335) || defined(CONFIG_BCM4335_MODULE)
-				  MMC_CAP_UHS_SDR104 |
-#endif /* CONFIG_BCM4335 || CONFIG_BCM4335_MODULE */
+				  MMC_CAP_UHS_SDR104,
+#else
+	.caps		= MMC_CAP_4_BIT_DATA |
 				  MMC_CAP_SDIO_IRQ,
+#endif /* CONFIG_BCM4335 || CONFIG_BCM4335_MODULE */
 	.caps2		= MMC_CAP2_BROKEN_VOLTAGE,
 	.pm_caps	= MMC_PM_KEEP_POWER | MMC_PM_IGNORE_PM_NOTIFY,
 	.fifo_depth	= 0x80,

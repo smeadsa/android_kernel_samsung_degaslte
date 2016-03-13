@@ -24,6 +24,7 @@
 #ifdef __KERNEL__
 
 struct alps_platform_data {
+	void (*alps_magnetic_power)(bool);
 	s8 orient[9];
 };
 #endif /*__KERNEL__*/

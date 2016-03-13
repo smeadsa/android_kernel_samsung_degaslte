@@ -509,7 +509,7 @@ static enum hotplug_cmd diagnose_condition(void)
 	int ret;
 	unsigned int normal_min_freq;
 
-#if defined(CONFIG_SCHED_HMP) && defined(CONFIG_CPU_FREQ_GOV_INTERACTIVE)
+#if defined(CONFIG_CPU_FREQ_GOV_INTERACTIVE)
 	normal_min_freq = cpufreq_interactive_get_hispeed_freq();
 #else
 	normal_min_freq = NORMALMIN_FREQ;
@@ -684,9 +684,9 @@ static int __init dm_cpu_hotplug_init(void)
 
 #if defined(CONFIG_SCHED_HMP)
 err_wq:
-#endif
 #ifdef CONFIG_PM
 	sysfs_remove_file(power_kobj, &enable_dm_hotplug.attr);
+#endif
 #endif
 err_enable_dm_hotplug:
 	fb_unregister_client(&fb_block);

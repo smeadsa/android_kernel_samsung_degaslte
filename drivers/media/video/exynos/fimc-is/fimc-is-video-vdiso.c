@@ -98,7 +98,7 @@ static int fimc_is_vdo_video_open(struct file *file)
 	info("[VDO:V:%d] %s\n", vctx->instance, __func__);
 
 	refcount = atomic_read(&core->video_isp.refcount);
-	if (refcount > FIMC_IS_MAX_NODES) {
+	if (refcount > FIMC_IS_MAX_NODES || refcount < 1) {
 		err("invalid ischain refcount(%d)", refcount);
 		close_vctx(file, video, vctx);
 		ret = -EINVAL;
@@ -527,6 +527,7 @@ p_err:
 
 static void fimc_is_vdo_buffer_queue(struct vb2_buffer *vb)
 {
+	int ret = 0;
 	u32 index;
 	struct fimc_is_video_ctx *vctx = vb->vb2_queue->drv_priv;
 	struct fimc_is_queue *queue;
@@ -544,8 +545,17 @@ static void fimc_is_vdo_buffer_queue(struct vb2_buffer *vb)
 	video = vctx->video;
 	device = vctx->device;
 
-	fimc_is_queue_buffer_queue(queue, video->vb2, vb);
-	fimc_is_ischain_vdo_buffer_queue(device, queue, index);
+	ret = fimc_is_queue_buffer_queue(queue, video->vb2, vb);
+	if (ret) {
+		merr("fimc_is_queue_buffer_queue is fail(%d)", vctx, ret);
+		return;
+	}
+
+	ret = fimc_is_ischain_vdo_buffer_queue(device, queue, index);
+	if (ret) {
+		merr("fimc_is_ischain_vdo_buffer_queue is fail(%d)", vctx, ret);
+		return;
+	}
 }
 
 static int fimc_is_vdo_buffer_finish(struct vb2_buffer *vb)

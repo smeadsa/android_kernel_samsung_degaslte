@@ -213,14 +213,15 @@ static int lcd_power_on(struct lcd_device *ld, int enable)
 			regulator_enable(regulator_vlcd_1v8);
 		}
 	}else {
+		/*LCD RESET low at SLEEP*/
+		gpio_request_one(EXYNOS4_GPX2(4),GPIOF_OUT_INIT_LOW, "GPX2");
+		gpio_free(EXYNOS4_GPX2(4));
 		if (system_rev < 5)
 			regulator_disable(regulator_vlcd_3v0);
 		else
 			gpio_set_value(EXYNOS4_GPX1(1), 0);
 		regulator_disable(regulator_vlcd_1v8);
-		/*LCD RESET low at SLEEP*/
-		gpio_request_one(EXYNOS4_GPX2(4),GPIOF_OUT_INIT_LOW, "GPX2");
-		gpio_free(EXYNOS4_GPX2(4));
+
 	}
 	if (system_rev < 5) {
 		regulator_put(regulator_vlcd_3v0);

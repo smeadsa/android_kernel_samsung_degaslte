@@ -116,9 +116,15 @@ static void timeline_print_pt(struct seq_file *s, struct sync_pt *sync_pt)
 	MALI_DEBUG_ASSERT_POINTER(sync_pt);
 
 	mpt = to_mali_sync_pt(sync_pt);
-	MALI_DEBUG_ASSERT_POINTER(mpt->flag);
 
-	seq_printf(s, "%u", mpt->flag->point);
+	/* It is possible this sync point is just under construct,
+	 * make sure the flag is valid before accessing it
+	*/
+	if (mpt->flag) {
+		seq_printf(s, "%u", mpt->flag->point);
+	} else {
+		seq_printf(s, "uninitialized");
+	}
 }
 
 static struct sync_timeline_ops mali_timeline_ops = {

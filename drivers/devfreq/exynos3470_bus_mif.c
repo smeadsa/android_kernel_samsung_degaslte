@@ -130,7 +130,7 @@ static unsigned int exynos4270_dram_parameter_rev[] = {
 static unsigned int exynos4270_dram_parameter_rev2[] = {
 	0x545A96D3,	/* 400Mhz */
 	0x3847748D,	/* 266Mhz */
-#ifdef CONFIG_MACH_DEGAS
+#if defined(CONFIG_MACH_DEGAS) || defined(CONFIG_MACH_KMINI)
 	0x2A36538A,	/* 200Mhz */
 #else
 	0x2A35538A,     /* 200Mhz */
@@ -144,7 +144,7 @@ static unsigned int exynos4270_dram_data_parameter[] = {
 };
 
 static unsigned int exynos4270_dram_power_parameter[] = {
-#ifdef CONFIG_MACH_DEGAS
+#if defined(CONFIG_MACH_DEGAS) || defined(CONFIG_MACH_KMINI)
 	0x50A4033A,	/* 400Mhz */
 	0x386E033A,	/* 266Mhz */
 	0x2852033A,	/* 200Mhz */
@@ -764,7 +764,7 @@ static __devinit int exynos4270_busfreq_mif_probe(struct platform_device *pdev)
 	data->devfreq = devfreq_add_device(dev, &exynos4270_mif_devfreq_profile, &devfreq_simple_exynos, &exynos3470_mif_governor_data);
 	if (IS_ERR(data->devfreq)) {
 		err = PTR_ERR(data->devfreq);
-		goto err_opp_add;
+		goto err_devfreq_add;
 	}
 
 #if defined(CONFIG_DEVFREQ_GOV_PM_QOS)
@@ -784,13 +784,13 @@ static __devinit int exynos4270_busfreq_mif_probe(struct platform_device *pdev)
 	err = sysfs_create_group(&data->devfreq->dev.kobj, &busfreq_mif_attr_group);
 	if (err) {
 		pr_err("DEVFREQ(MIF) : Failed create time_in_state sysfs\n");
-		goto err_devfreq_add;
+		goto err_sysfs_create;
 	}
 
 	err = device_create_file(&data->devfreq->dev, &dev_attr_available_frequencies);
 	if (err) {
 		pr_err("DEVFREQ(MIF) : Failed create available_frequencies sysfs\n");
-		goto err_devfreq_add;
+		goto err_dev_create;
 	}
 
 	/* Add sysfs for freq_table */
@@ -810,15 +810,20 @@ static __devinit int exynos4270_busfreq_mif_probe(struct platform_device *pdev)
 
 	return 0;
 
-err_devfreq_add:
+err_dev_create:
+	sysfs_remove_group(&data->devfreq->dev.kobj, &busfreq_mif_attr_group);
+err_sysfs_create:
+	devfreq_unregister_opp_notifier(dev, data->devfreq);
 	devfreq_remove_device(data->devfreq);
-err_target_opp:
+err_devfreq_add:
+	exynos4270_ppmu_put(data->ppmu);
 err_ppmu_get:
-	if (data->vdd_mif)
-		regulator_put(data->vdd_mif);
+err_target_opp:
+	regulator_put(data->vdd_mif);
 err_regulator:
 	platform_set_drvdata(pdev, NULL);
 err_opp_add:
+	mutex_destroy(&data->lock);
 	kfree(data);
 
 	return err;

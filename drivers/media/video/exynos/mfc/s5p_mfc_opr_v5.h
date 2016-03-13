@@ -165,8 +165,4 @@ void s5p_mfc_cleanup_queue(struct list_head *lh, struct vb2_queue *vq);
 void s5p_mfc_write_info(struct s5p_mfc_ctx *ctx, unsigned int data, unsigned int ofs);
 unsigned int s5p_mfc_read_info(struct s5p_mfc_ctx *ctx, unsigned int ofs);
 
-#define is_out_of_bound(dev, addr, size)			\
-				(((addr) < ((dev)->port_a)) ||	\
-				((addr) + (size)) > ((dev)->port_a) + SZ_256M)
-
 #endif /* S5P_MFC_OPR_V5_H_ */

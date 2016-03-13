@@ -282,7 +282,7 @@
 #define CRC_FIRMWARE_SEED        0
 #define SELF_TEST_SUCCESS        1
 #define MS_PER_DMP_TICK          20
-#define DMP_IMAGE_SIZE           3506
+#define DMP_IMAGE_SIZE           3533
 
 /* init parameters */
 #define INIT_FIFO_RATE           50
@@ -676,6 +676,12 @@ struct inv_shealth {
 	u16 interrupt_counter;
 	u64 step_count;
 
+	u16 tick_count;
+
+	s64 start_time_timeofday;
+	s64 interrupt_time_timeofday;
+	s64 stop_time_timeofday;
+
 	u16 state;
 
 	s16 interrupt_duration;
@@ -999,6 +1005,7 @@ enum MPU_IIO_ATTR_ADDR {
 	ATTR_DMP_SHEALTH_INSTANT_CADENCE,
 	ATTR_DMP_SHEALTH_FLUSH_CADENCE,
 	ATTR_DMP_SHEALTH_FREQ_THRESHOLD,
+	ATTR_DMP_SHEALTH_TIMER,
 	ATTR_DMP_TAP_ON,
 	ATTR_DMP_TAP_THRESHOLD,
 	ATTR_DMP_TAP_MIN_COUNT,
@@ -1150,6 +1157,8 @@ int inv_i2c_single_write_base(struct inv_mpu_state *st,
 	u16 i2c_addr, u8 reg, u8 data);
 int inv_hw_self_test(struct inv_mpu_state *st);
 s64 get_time_ns(void);
+s64 get_time_timeofday(void);
+
 int write_be32_key_to_mem(struct inv_mpu_state *st, u32 data, int key);
 
 int inv_set_accel_bias_dmp(struct inv_mpu_state *st);
@@ -1166,6 +1175,8 @@ int inv_quaternion_on(struct inv_mpu_state *st,
 int inv_enable_pedometer_interrupt(struct inv_mpu_state *st, bool en);
 int inv_read_pedometer_counter(struct inv_mpu_state *st);
 int inv_enable_pedometer(struct inv_mpu_state *st, bool en);
+int inv_reset_pedometer_internal_timer(struct inv_mpu_state *st);
+
 int inv_get_pedometer_steps(struct inv_mpu_state *st, u32 *steps);
 int inv_get_pedometer_time(struct inv_mpu_state *st, u32 *time);
 
@@ -1179,6 +1190,9 @@ ssize_t inv_get_shealth_instant_cadence(struct inv_mpu_state *st, char* buf);
 s64 inv_get_shealth_timestamp(struct inv_mpu_state *st, bool start);
 int inv_set_shealth_walk_run_thresh(struct inv_mpu_state *st, u32 freq);
 int inv_get_shealth_walk_run_thresh(struct inv_mpu_state *st, char *buf);
+int inv_set_shealth_update_timer(struct inv_mpu_state *st, u16 timer);
+int inv_get_shealth_update_timer(struct inv_mpu_state *st, char *buf);
+
 
 int inv_set_Qshot_start_angle(struct inv_mpu_state *st, int angle);
 int inv_set_Qshot_finish_angle(struct inv_mpu_state *st, int angle);

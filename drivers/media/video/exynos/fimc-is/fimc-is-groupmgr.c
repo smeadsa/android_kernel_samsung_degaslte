@@ -488,31 +488,73 @@ static void fimc_is_group_cancel(struct fimc_is_group *group,
 	}
 }
 #ifdef CONFIG_USE_VENDER_FEATURE
+
+#ifdef CONFIG_FLED_RT5033_EXT_GPIO
+int rt5033_gpio_flash_lock(bool lock);
+int rt5033_flash_force_enable(int enable);
+void rt5033_dump_reg(void);
+
+static int flash_mode[FIMC_IS_MAX_NODES]; /* OFF: 0, Main-Flash:1, Torch:2 */
+#endif
+
 static void fimc_is_group_set_torch(struct fimc_is_group *group,
 	struct fimc_is_frame *ldr_frame)
 {
 	/* pr_info("%s, mode:%d\n\n",__func__,group->aeflashMode); */
 	if (group->prev){
-		pr_info("%s,fail\n\n",__func__);
 		return;
 	}
 
 	if (group->aeflashMode != ldr_frame->shot->ctl.aa.aeflashMode) {
+		if (group->instance >= FIMC_IS_MAX_NODES) {
+			pr_err("%s: error, innormal instance count %d (max %d)\n",
+					__func__, group->instance, FIMC_IS_MAX_NODES);
+			return;
+		}
+
 		group->aeflashMode = ldr_frame->shot->ctl.aa.aeflashMode;
 		switch (group->aeflashMode) {
 		case AA_FLASHMODE_ON_ALWAYS: /*TORCH mode*/
-			pr_info("%s, AA_FLASHMODE_ON_ALWAYS mode:%d\n\n",__func__,group->aeflashMode);
+			pr_info("%s, [inst %d] AA_FLASHMODE_ON_ALWAYS mode:%d\n\n",
+				__func__, group->instance, group->aeflashMode);
 		case AA_FLASHMODE_START: /*Pre flash mode*/
-			pr_info("%s, AA_FLASHMODE_START mode:%d\n\n",__func__,group->aeflashMode);
+			pr_info("%s, [inst %d] AA_FLASHMODE_START mode:%d\n\n",
+				__func__, group->instance, group->aeflashMode);
+#ifdef CONFIG_FLED_RT5033_EXT_GPIO
+			flash_mode[group->instance] = 2;
+			rt5033_flash_force_enable(true);
+#endif
 			break;
 		case AA_FLASHMODE_CAPTURE: /*Main flash mode*/
-			pr_info("%s, AA_FLASHMODE_CAPTURE mode:%d\n\n",__func__,group->aeflashMode);
+			pr_info("%s, [inst %d] AA_FLASHMODE_CAPTURE mode:%d\n\n",
+				__func__, group->instance, group->aeflashMode);
+#ifdef CONFIG_FLED_RT5033_EXT_GPIO
+			flash_mode[group->instance] = 1;
+			rt5033_flash_force_enable(true);
+			rt5033_gpio_flash_lock(true);
+#endif
 			break;
 		case AA_FLASHMODE_OFF: /*OFF mode*/
-			pr_info("%s,AA_FLASHMODE_OFF mode:%d\n\n",__func__,group->aeflashMode);
+			pr_info("%s, [inst %d] AA_FLASHMODE_OFF mode:%d\n\n",
+				__func__, group->instance, group->aeflashMode);
+#ifdef CONFIG_FLED_RT5033_EXT_GPIO
+			switch (flash_mode[group->instance]) {
+			case 2: /* Torch */
+				rt5033_flash_force_enable(false);
+				rt5033_dump_reg();
+				break;
+			case 1: /* Main flash */
+				rt5033_dump_reg();
+				break;
+			default:
+				break;
+			}
+			flash_mode[group->instance] = 0;
+#endif
 			break;
 		default:
-			pr_info("%s,default mode:%d\n\n",__func__,group->aeflashMode);
+			pr_info("%s, [inst %d] default mode:%d\n\n",
+				__func__, group->instance, group->aeflashMode);
 			break;
 		}
 	}
@@ -1343,7 +1385,7 @@ int fimc_is_group_buffer_queue(struct fimc_is_groupmgr *groupmgr,
 		goto p_err;
 	}
 
-	if (unlikely(frame->memory == FRAME_UNI_MEM)) {
+	if (unlikely(!test_bit(FRAME_INI_MEM, &frame->memory))) {
 		err("frame %d is NOT init", index);
 		ret = EINVAL;
 		goto p_err;
@@ -1419,11 +1461,10 @@ int fimc_is_group_buffer_queue(struct fimc_is_groupmgr *groupmgr,
 
 	framemgr_x_barrier_irqr(framemgr, index, flags);
 
-	if (unlikely(frame->memory == FRAME_INI_MEM) &&
-		!test_bit(FIMC_IS_SENSOR_FRONT_START, &sensor->state)) {
-		fimc_is_itf_map(device, GROUP_ID(group->id),
-			frame->dvaddr_shot, frame->shot_size);
-		frame->memory = FRAME_MAP_MEM;
+	if (unlikely(!test_bit(FRAME_MAP_MEM, &frame->memory) &&
+		!test_bit(FIMC_IS_SENSOR_FRONT_START, &sensor->state))) {
+		fimc_is_itf_map(device, GROUP_ID(group->id), frame->dvaddr_shot, frame->shot_size);
+		set_bit(FRAME_MAP_MEM, &frame->memory);
 	}
 
 	fimc_is_group_start_trigger(groupmgr, group, frame);
@@ -1788,7 +1829,7 @@ int fimc_is_group_start(struct fimc_is_groupmgr *groupmgr,
 	if ((!pm_qos_request_active(&device->user_qos)) &&
 			(sysfs_debug.en_dvfs)) {
 		/* try to find dynamic scenario to apply */
-		scenario_id = fimc_is_dvfs_sel_scenario(FIMC_IS_DYNAMIC_SN, device);
+		scenario_id = fimc_is_dvfs_sel_scenario(FIMC_IS_DYNAMIC_SN, device, ldr_frame);
 
 		if (scenario_id > 0) {
 			struct fimc_is_dvfs_scenario_ctrl *dynamic_ctrl = resourcemgr->dvfs_ctrl.dynamic_ctrl;

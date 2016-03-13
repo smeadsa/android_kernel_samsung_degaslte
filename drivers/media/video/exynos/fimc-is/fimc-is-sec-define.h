@@ -1,3 +1,6 @@
+#ifndef FIMC_IS_SEC_DEFINE_H
+#define FIMC_IS_SEC_DEFINE_H
+
 #include <linux/module.h>
 #include <linux/delay.h>
 #include <linux/kernel.h>
@@ -29,12 +32,11 @@
 #include <mach/map.h>
 #include <mach/regs-clock.h>
 #include <mach/smc.h>
-#include <linux/regulator/consumer.h>
 #include <mach/exynos-fimc-is.h>
 #include <mach/exynos-fimc-is-sensor.h>
 #include <linux/gpio.h>
 #include <plat/gpio-cfg.h>
-#include "crc32.h"
+#include <linux/regulator/consumer.h>
 
 #include <linux/types.h>
 #include <linux/pm_runtime.h>
@@ -43,6 +45,16 @@
 #include <media/videobuf2-core.h>
 
 #include "fimc-is-core.h"
+#include "fimc-is-param.h"
+#include "fimc-is-cmd.h"
+#include "fimc-is-regs.h"
+#include "fimc-is-err.h"
+#include "fimc-is-video.h"
+
+#include "fimc-is-device-sensor.h"
+#include "fimc-is-device-ischain.h"
+#include "crc32.h"
+#include "fimc-is-companion.h"
 
 #define FW_CORE_VER		0
 #define FW_PIXEL_SIZE		1
@@ -82,25 +94,27 @@
 #define FW_MODULE_COMPANY_POWER_LOGIX	'A'
 #define FW_MODULE_COMPANY_DI		'D'
 
+#define FW_2P2		"D16LL"
 #define FW_3L2		"C13LL"
 #define FW_IMX135	"C13LS"
-#define FW_IMX134_OLD	"D08LS"
-#define FW_IMX134	"E08LS"
-#define FW_IMX175	"C08LT"
+#define FW_IMX134	"D08LS"
 
 #define SDCARD_FW
 #define FIMC_IS_SETFILE_SDCARD_PATH		"/data/media/0/"
 #define FIMC_IS_FW				"fimc_is_fw2.bin"
-#define FIMC_IS_FW_IMX175			"fimc_is_fw2.bin"
 #define FIMC_IS_FW_3L2				"fimc_is_fw2_3L2.bin"
 #define FIMC_IS_FW_IMX134			"fimc_is_fw2_IMX134.bin"
-#define FIMC_IS_FW_IMX135			"fimc_is_fw2_IMX135.bin"
+#define FIMC_IS_FW_COMPANION_EVT0				"companion_fw_evt0.bin"
+#define FIMC_IS_FW_COMPANION_EVT1				"companion_fw_evt1.bin"
 #define FIMC_IS_FW_SDCARD			"/data/media/0/fimc_is_fw2.bin"
-#define FIMC_IS_IMX175_SETF			"setfile_imx175.bin"
 #define FIMC_IS_IMX135_SETF			"setfile_imx135.bin"
 #define FIMC_IS_IMX134_SETF			"setfile_imx134.bin"
 #define FIMC_IS_3L2_SETF			"setfile_3L2.bin"
-#define FIMC_IS_S5K6B2_SETF			"setfile_6b2.bin"
+#define FIMC_IS_6B2_SETF			"setfile_6b2.bin"
+#define FIMC_IS_8B1_SETF			"setfile_8b1.bin"
+#define FIMC_IS_2P2_SETF			"setfile_2p2.bin"
+#define FIMC_IS_COMPANION_MASTER_SETF			"companion_master_setfile.bin"
+#define FIMC_IS_COMPANION_MODE_SETF			"companion_mode_setfile.bin"
 #define FIMC_IS_FW_PATH				"/system/vendor/firmware/"
 #define FIMC_IS_FW_DUMP_PATH			"/data/"
 
@@ -110,47 +124,40 @@
 #define FIMC_IS_SETFILE_VER_SIZE		52
 
 #define FIMC_IS_CAL_SDCARD			"/data/cal_data.bin"
+
 /*#define FIMC_IS_MAX_CAL_SIZE			(20 * 1024)*/
 #define FIMC_IS_MAX_FW_SIZE			(2048 * 1024)
+#define FIMC_IS_MAX_COMPANION_FW_SIZE			(120 * 1024)
 #define FIMC_IS_CAL_START_ADDR			(0x013D0000)
 #define FIMC_IS_CAL_RETRY_CNT			(2)
 #define FIMC_IS_FW_RETRY_CNT			(2)
 
 #if defined(CONFIG_MACH_KMINI) || defined(CONFIG_MACH_MEGA2)
 #define CAL_MAP_VERSION_ADDR			0x30
+#define HEADER_CRC32_LEN (80 / 2)
+#define OEM_CRC32_LEN (64 / 2)
+#define AWB_CRC32_LEN (32 / 2)
+#define SHADING_CRC32_LEN (6656 / 2)
+#define FROM_VERSION_V004 '4'
+#define FROM_VERSION_V005 '5'
 #else
 #define CAL_MAP_VERSION_ADDR			0x60
-#endif
-#define HEADER_CRC32_LEN (128 / 2)
+#define HEADER_CRC32_LEN (224 / 2)
 #define OEM_CRC32_LEN (192 / 2)
 #define AWB_CRC32_LEN (32 / 2)
 #define SHADING_CRC32_LEN (2336 / 2)
+#define FROM_VERSION_V004 '4'
+#define FROM_VERSION_V005 '5'
+#endif
 
-struct fimc_is_from_info {
-	u32		bin_start_addr;
-	u32		bin_end_addr;
-	u32		oem_start_addr;
-	u32		oem_end_addr;
-	u32		awb_start_addr;
-	u32		awb_end_addr;
-	u32		shading_start_addr;
-	u32		shading_end_addr;
-	u32		setfile_start_addr;
-	u32		setfile_end_addr;
-
-	char		header_ver[12];
-	char		cal_map_ver[4];
-	char		setfile_ver[7];
-	char		oem_ver[12];
-	char		awb_ver[12];
-	char		shading_ver[12];
-};
-
-enum fimc_is_camera_device {
-	CAMERA_SINGLE_REAR,
-	CAMERA_SINGLE_FRONT,
-	CAMERA_DUAL_REAR,
-	CAMERA_DUAL_FRONT,
+enum {
+        CC_BIN1 = 0,
+        CC_BIN2,
+        CC_BIN3,
+        CC_BIN4,
+        CC_BIN5,
+        CC_BIN6,
+        CC_BIN_MAX,
 };
 
 int fimc_is_sec_set_force_caldata_dump(bool fcd);
@@ -160,19 +167,29 @@ ssize_t read_data_from_file(char *name, char *buf, size_t count, loff_t *pos);
 
 int fimc_is_sec_get_sysfs_finfo(struct fimc_is_from_info **finfo);
 int fimc_is_sec_get_sysfs_pinfo(struct fimc_is_from_info **pinfo);
+int fimc_is_sec_get_cal_buf(char **buf);
+int fimc_is_sec_get_loaded_fw(char **buf);
+int fimc_is_sec_get_loaded_c1_fw(char **buf);
 
 int fimc_is_sec_get_camid_from_hal(char *fw_name, char *setf_name);
-int fimc_is_sec_get_module_name(void);
-int fimc_is_sec_set_module_name(int module);
 int fimc_is_sec_get_camid(void);
 int fimc_is_sec_set_camid(int id);
 int fimc_is_sec_get_pixel_size(char *header_ver);
 
-bool fimc_is_sec_is_fw_exist(char *fw_name);
-int fimc_is_sec_readfw(void);
-int fimc_is_sec_readcal(struct device *dev, int isSysfsRead);
+int fimc_is_sec_readfw(struct fimc_is_core *core);
+#ifdef CONFIG_CAMERA_EEPROM_SUPPORT
+int fimc_is_sec_readcal_eeprom(struct device *dev, int isSysfsRead);
+#else
+int fimc_is_sec_readcal(struct fimc_is_core *core, int isSysfsRead);
+#endif
 
-int fimc_is_sec_fw_sel(struct device *dev, struct exynos_platform_fimc_is_sensor *pdata, char *fw_name, char *setf_name, int isSysfsRead);
+#ifdef CONFIG_CAMERA_EEPROM_SUPPORT
+int fimc_is_sec_fw_sel_eeprom(struct device *dev, char *fw_name, char *setf_name, int isSysfsRead);
+#else
+int fimc_is_sec_fw_sel(struct device *dev, char *fw_name, char *setf_name, int isSysfsRead);
+int fimc_is_sec_concord_fw_sel(struct fimc_is_core *core, struct device *dev,
+	char *fw_name, char *master_setf_name, char *mode_setf_name, int isSysfsRead);
+#endif
 int fimc_is_sec_fw_revision(char *fw_ver);
 bool fimc_is_sec_fw_module_compare(char *fw_ver1, char *fw_ver2);
 
@@ -180,9 +197,13 @@ bool fimc_is_sec_check_fw_crc32(char *buf);
 bool fimc_is_sec_check_cal_crc32(char *buf);
 void fimc_is_sec_make_crc32_table(u32 *table, u32 id);
 
-int fimc_is_sec_gpio_enable(struct exynos_platform_fimc_is_sensor *pdata, char *name, bool on);
+int fimc_is_sec_gpio_enable(struct exynos_platform_fimc_is *pdata, char *name, bool on);
 int fimc_is_sec_core_voltage_select(struct device *dev, char *header_ver);
 int fimc_is_sec_ldo_enable(struct device *dev, char *name, bool on);
 
-int fimc_is_spi_reset(void *buf, u32 rx_addr, size_t size);
-int fimc_is_spi_read(void *buf, u32 rx_addr, size_t size);
+int fimc_is_spi_reset_by_core(struct spi_device *spi, void *buf, u32 rx_addr, size_t size);
+int fimc_is_spi_read_by_core(struct spi_device *spi, void *buf, u32 rx_addr, size_t size);
+#ifdef CONFIG_COMPANION_USE
+void fimc_is_set_spi_config(struct fimc_is_spi_gpio *spi_gpio, int func, bool ssn);
+#endif
+#endif /* FIMC_IS_SEC_DEFINE_H */

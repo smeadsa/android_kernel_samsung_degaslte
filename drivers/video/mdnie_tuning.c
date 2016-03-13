@@ -45,15 +45,11 @@
 #endif
 
 #define KFREE(ptr)	do { if (ptr) kfree(ptr); (ptr) = NULL; } while (0)
-#define CONSTANT_F1(x)			(((x << 10) * 107) / 100)
-#define CONSTANT_F2(x)			(((x << 10) * 44) / 43)
-#define CONSTANT_F3(x)			(((x << 10) * 57) / 8)
-#define CONSTANT_F4(x)			(((x << 10) * 19) / 6)
 
-#define COLOR_OFFSET_F1(x, y)		(((y << 10) - CONSTANT_F1(x) - (60 << 10)) >> 10)
-#define COLOR_OFFSET_F2(x, y)		(((y << 10) - CONSTANT_F2(x) - (62 << 10)) >> 10)
-#define COLOR_OFFSET_F3(x, y)		(((y << 10) + CONSTANT_F3(x) - (25161 << 10)) >> 10)
-#define COLOR_OFFSET_F4(x, y)		(((y << 10) + CONSTANT_F4(x) - (12613 << 10)) >> 10)
+#define COLOR_OFFSET_F1(x, y)  (((y << 10) - (((x << 10) * 164) / 151) + (8 << 10)) >> 10)
+#define COLOR_OFFSET_F2(x, y)  (((y << 10) - (((x << 10) * 70) / 67) - (7 << 10)) >> 10)
+#define COLOR_OFFSET_F3(x, y)  (((y << 10) + (((x << 10) * 181) / 35) - (18852 << 10)) >> 10)
+#define COLOR_OFFSET_F4(x, y)  (((y << 10) + (((x << 10) * 157) / 52) - (12055 << 10)) >> 10)
 
 int mdnie_calibration(unsigned short x, unsigned short y, int *result)
 {

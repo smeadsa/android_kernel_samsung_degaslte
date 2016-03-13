@@ -24,6 +24,12 @@
 #include "s5p_mfc_reg.h"
 
 #ifdef CONFIG_MFC_USE_BUS_DEVFREQ
+#if defined(CONFIG_SOC_EXYNOS3470) || defined(CONFIG_SOC_EXYNOS4415)
+#define MFC_QOS_IMPROVED
+#define MFC_QOS_WFD_MB			108000			/* 720p@30fps */
+#define MFC_QOS_RECALC(x)		(((x) * 23) / 10)	/* 2.3x */
+#endif
+
 enum {
 	MFC_QOS_ADD,
 	MFC_QOS_UPDATE,
@@ -38,13 +44,16 @@ void mfc_qos_operate(struct s5p_mfc_ctx *ctx, int opr_type, int idx)
 
 	switch (opr_type) {
 	case MFC_QOS_ADD:
+		mutex_lock(&dev->curr_rate_lock);
 		pm_qos_add_request(&dev->qos_req_int,
 				PM_QOS_DEVICE_THROUGHPUT,
 				qos_table[idx].freq_int);
+		dev->curr_rate = qos_table[idx].freq_mfc;
+		mutex_unlock(&dev->curr_rate_lock);
+
 		pm_qos_add_request(&dev->qos_req_mif,
 				PM_QOS_BUS_THROUGHPUT,
 				qos_table[idx].freq_mif);
-		dev->curr_rate = qos_table[idx].freq_mfc;
 
 #ifdef CONFIG_ARM_EXYNOS_IKS_CPUFREQ
 		pm_qos_add_request(&dev->qos_req_cpu,
@@ -63,11 +72,26 @@ void mfc_qos_operate(struct s5p_mfc_ctx *ctx, int opr_type, int idx)
 		mfc_debug(5, "QoS request: %d\n", idx + 1);
 		break;
 	case MFC_QOS_UPDATE:
-		pm_qos_update_request(&dev->qos_req_int,
-				qos_table[idx].freq_int);
-		pm_qos_update_request(&dev->qos_req_mif,
-				qos_table[idx].freq_mif);
-		dev->curr_rate = qos_table[idx].freq_mfc;
+		if (dev->curr_rate < qos_table[idx].freq_mfc) {
+
+			mutex_lock(&dev->curr_rate_lock);
+			pm_qos_update_request(&dev->qos_req_int,
+					qos_table[idx].freq_int);
+			dev->curr_rate = qos_table[idx].freq_mfc;
+			mutex_unlock(&dev->curr_rate_lock);
+
+			pm_qos_update_request(&dev->qos_req_mif,
+					qos_table[idx].freq_mif);
+		} else {
+			mutex_lock(&dev->curr_rate_lock);
+			dev->curr_rate = qos_table[idx].freq_mfc;
+			pm_qos_update_request(&dev->qos_req_int,
+					qos_table[idx].freq_int);
+			mutex_unlock(&dev->curr_rate_lock);
+
+			pm_qos_update_request(&dev->qos_req_mif,
+					qos_table[idx].freq_mif);
+		}
 
 #ifdef CONFIG_ARM_EXYNOS_IKS_CPUFREQ
 		pm_qos_update_request(&dev->qos_req_cpu,
@@ -83,9 +107,12 @@ void mfc_qos_operate(struct s5p_mfc_ctx *ctx, int opr_type, int idx)
 		mfc_debug(5, "QoS update: %d\n", idx + 1);
 		break;
 	case MFC_QOS_REMOVE:
-		pm_qos_remove_request(&dev->qos_req_int);
-		pm_qos_remove_request(&dev->qos_req_mif);
+		mutex_lock(&dev->curr_rate_lock);
 		dev->curr_rate = dev->min_rate;
+		pm_qos_remove_request(&dev->qos_req_int);
+		mutex_unlock(&dev->curr_rate_lock);
+
+		pm_qos_remove_request(&dev->qos_req_mif);
 
 #ifdef CONFIG_ARM_EXYNOS_IKS_CPUFREQ
 		pm_qos_remove_request(&dev->qos_req_cpu);
@@ -144,6 +171,10 @@ static inline int get_ctx_mb(struct s5p_mfc_ctx *ctx)
 	mb_height = (ctx->img_height + 15) / 16;
 	fps = ctx->framerate / 1000;
 
+	mfc_debug(2, "ctx[%d:%s], %d x %d @ %d fps\n", ctx->num,
+			(ctx->type == MFCINST_ENCODER ? "ENC" : "DEC"),
+			ctx->img_width, ctx->img_height, fps);
+
 	return mb_width * mb_height * fps;
 }
 
@@ -154,6 +185,9 @@ void s5p_mfc_qos_on(struct s5p_mfc_ctx *ctx)
 	int found = 0, total_mb = 0;
 	/* TODO: cpu lock is not separated yet */
 	int need_cpulock = 0;
+#if defined(MFC_QOS_IMPROVED)
+	int is_wfd = 0, qos_inst = 0;
+#endif
 
 	list_for_each_entry(qos_ctx, &dev->qos_queue, qos_list) {
 		total_mb += get_ctx_mb(qos_ctx);
@@ -171,6 +205,18 @@ void s5p_mfc_qos_on(struct s5p_mfc_ctx *ctx)
 		if (ctx->type == MFCINST_DECODER)
 			need_cpulock++;
 	}
+#if defined(MFC_QOS_IMPROVED)
+	list_for_each_entry(qos_ctx, &dev->qos_queue, qos_list) {
+		qos_inst++;
+		if (qos_ctx->type == MFCINST_ENCODER) {
+			if (get_ctx_mb(qos_ctx) == MFC_QOS_WFD_MB)
+				is_wfd = 1;
+		}
+	}
+
+	if (qos_inst > 1 && is_wfd)
+		total_mb = MFC_QOS_RECALC(total_mb);
+#endif
 
 	mfc_qos_add_or_update(ctx, total_mb);
 }

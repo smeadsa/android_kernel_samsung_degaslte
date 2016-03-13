@@ -610,6 +610,12 @@ static int fimc_is_sen_video_g_ctrl(struct file *file, void *priv,
 			ctrl->value = (width << 16) | height;
 		}
 		break;
+	case V4L2_CID_IS_G_DTPSTATUS:
+		if (test_bit(FIMC_IS_SENSOR_FRONT_DTP_STOP, &device->state))
+			ctrl->value = 1;
+		else
+			ctrl->value = 0;
+		break;
 	default:
 		ret = fimc_is_sensor_g_ctrl(device, ctrl);
 		if (ret) {
@@ -628,7 +634,7 @@ static int fimc_is_sen_video_g_parm(struct file *file, void *priv,
 	struct v4l2_streamparm *parm)
 {
 	struct fimc_is_video_ctx *vctx = file->private_data;
-	struct fimc_is_device_sensor *sensor = vctx->device;
+	struct fimc_is_device_sensor *device = vctx->device;
 	struct v4l2_captureparm *cp = &parm->parm.capture;
 	struct v4l2_fract *tfp = &cp->timeperframe;
 
@@ -637,7 +643,7 @@ static int fimc_is_sen_video_g_parm(struct file *file, void *priv,
 
 	cp->capability |= V4L2_CAP_TIMEPERFRAME;
 	tfp->numerator = 1;
-	tfp->denominator = sensor->image.framerate;
+	tfp->denominator = device->image.framerate;
 
 	return 0;
 }

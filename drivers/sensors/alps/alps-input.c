@@ -103,9 +103,9 @@ static long alps_ioctl(struct file* filp, unsigned int cmd, unsigned long arg)
 		}
 
 		mutex_lock(&alps_lock);
-		if (tmpval <=  10)		tmpval =  10;
-		else if (tmpval <=  20)	tmpval =  20;
-		else if (tmpval <=  70)	tmpval =  70;
+		if (tmpval <=  15)			tmpval =  10;
+		else if (tmpval <=  45)		tmpval =  20;
+		else if (tmpval <=  135)	tmpval =  70;
 		else	tmpval = 200;
 
 		mag_delay = tmpval;
@@ -181,7 +181,16 @@ static struct miscdevice alps_device = {
 
 static int alps_probe(struct platform_device *dev)
 {
+	int xyz[3];
+	int ret;
+
 	alps_info("is called\n");
+	ret = hscd_get_magnetic_field_data(xyz);
+	if (ret == -ENODEV) {
+		pr_info("alps: hscd probe fail\n");
+		return ret;
+	}
+
 	return 0;
 }
 
@@ -306,11 +315,11 @@ magnetic_delay_store(struct device *dev, struct device_attribute *attr,
 	pr_info("%s, new_delay = %d, old_delay = %d", __func__, new_delay,
 			mag_delay);
 
-	if (new_delay <= 10)
+	if (new_delay <= 15)
 		new_delay = 10;
-	else if (new_delay <= 20)
+	else if (new_delay <= 45)
 		new_delay = 20;
-	else if (new_delay <= 70)
+	else if (new_delay <= 135)
 		new_delay = 70;
 	else
 		new_delay = SENSOR_DEFAULT_DELAY;

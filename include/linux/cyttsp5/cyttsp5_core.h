@@ -53,7 +53,7 @@ __stringify(CY_DRIVER_NAME)		    \
 
 /* FW VERSION */
 #define CY_HW_VERSION 0x02
-#define CY_FW_VERSION 0x0900
+#define CY_FW_VERSION 0x1900
 
 enum cyttsp5_core_platform_flags {
 	CY_CORE_FLAG_NONE,
@@ -100,6 +100,7 @@ struct cyttsp5_loader_platform_data {
 struct cyttsp5_core_platform_data {
 	int irq_gpio;
 	int rst_gpio;
+	int ta_gpio;
 	int level_irq_udelay;
 	u16 hid_desc_register;
 	u16 vendor_id;
@@ -112,8 +113,10 @@ struct cyttsp5_core_platform_data {
 		int on, struct device *dev, atomic_t *ignore_irq);
 	int (*irq_stat)(struct cyttsp5_core_platform_data *pdata,
 		struct device *dev);
+	void (*register_cb) (void *);
 	struct touch_settings *sett[CY_TOUCH_SETTINGS_MAX];
 	u32 flags;
+	struct mutex poweronoff_lock;
 };
 
 struct touch_framework {
@@ -157,4 +160,5 @@ struct cyttsp5_platform_data {
 	struct cyttsp5_proximity_platform_data *prox_pdata;
 };
 
+void tsp_charger_inform(bool en);
 #endif /* _LINUX_CYTTSP5_CORE_H */

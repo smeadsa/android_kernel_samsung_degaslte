@@ -1241,6 +1241,7 @@ int mali_dvfs_level_unlock(void)
 		_mali_osk_mutex_wait(mali_isp_lock);
 		ENABLE_LOCK_BY_ISP = 0;
 		mali_isp_current_level = 0;
+		mali_gpu_clk = 160;
 		MALI_DEBUG_PRINT(1, ("DVFS lock is released ISP\n"));
 		_mali_osk_mutex_signal(mali_isp_lock);
 	}

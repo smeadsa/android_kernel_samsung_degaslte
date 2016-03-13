@@ -21,7 +21,6 @@
 #include <linux/dma-direction.h>
 #include <linux/dma-buf.h>
 
-#define ION_IOVMM_FIXMAP_ID	15
 dma_addr_t ion_iovmm_map(struct dma_buf_attachment *attachment,
 			 off_t offset, size_t size,
 			 enum dma_data_direction direction, int id);

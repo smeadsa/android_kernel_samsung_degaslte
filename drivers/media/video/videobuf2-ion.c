@@ -60,7 +60,7 @@ struct vb2_ion_buf {
 #define DMA_SYNC_SIZE		SZ_512K
 #define OUTER_FLUSH_ALL_SIZE	SZ_1M
 
-#define FIXIOMAP_REGION		ION_IOVMM_FIXMAP_ID
+#define FIXIOMAP_REGION		0
 
 #define ctx_cached(ctx) (!(ctx->flags & VB2ION_CTX_UNCACHED))
 #define ctx_iommu(ctx) (!!(ctx->flags & VB2ION_CTX_IOMMU))

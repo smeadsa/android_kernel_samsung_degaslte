@@ -45,7 +45,7 @@
 #define DMP_PRECISION                   1000
 #define DMP_MAX_DIVIDER                 4
 #define DMP_MAX_MIN_TAPS                4
-#define DMP_IMAGE_CRC_VALUE             0x6c6191e8
+#define DMP_IMAGE_CRC_VALUE             0x34fc5c2d
 
 /*--- Test parameters defaults --- */
 #define DEF_OLDEST_SUPP_PROD_REV        8
@@ -415,7 +415,7 @@ int mpu_memory_read(struct inv_mpu_state *st, u8 mpu_addr, u16 mem_addr,
 }
 
 int mpu_memory_write_unaligned(struct inv_mpu_state *st, u16 key, int len,
-								u8 const *d)
+				u8 const *d)
 {
 	u32 addr;
 	int start, end;
@@ -1387,6 +1387,18 @@ int inv_enable_pedometer(struct inv_mpu_state *st, bool en)
 	return mem_w_key(KEY_CFG_PED_ENABLE, ARRAY_SIZE(d), d);
 }
 
+int inv_reset_pedometer_internal_timer(struct inv_mpu_state *st)
+{
+	u8 d[4] = {0,};
+	int result;
+
+	pr_info("[INV] %s\n", __func__);
+
+	result = mpu_memory_write(st, st->i2c_addr, 0x324, 4, d);
+
+	return result;
+}
+
 int inv_get_pedometer_steps(struct inv_mpu_state *st, u32 *steps)
 {
 	u8 d[4];
@@ -1633,7 +1645,7 @@ int inv_set_shealth_walk_run_thresh(struct inv_mpu_state *st, u32 freq)
 	int result;
 
 	/* cadence = 50Hz / Freq << 15 */
-	cadence = 50 / freq * 32768;
+	cadence = 50000 * 32768 / freq;
 
 	pr_info("[SHEALTH:%s] Frequency threshold : %u %u", __func__, cadence, freq);
 	//result = inv_set_mpu_memory(KEY_S_HEALTH_FREQ_TH, 4, inv_int32_to_big8(cadence,reg));
@@ -1660,9 +1672,9 @@ int inv_get_shealth_walk_run_thresh(struct inv_mpu_state *st, char *buf)
 	cadence = (u32) be32_to_cpup((__be32 *)(d));
 
 	if(cadence)
-		freq = 50 * 32768 / cadence;
-	else
-		freq = 0;
+	{
+		freq = 50000 * 32768 / cadence;
+	}
 
 	pr_info("[SHEALTH:%s] FT d0 d1 d2 d3 : %d %d %d %d\n", __func__, d[0], d[1], d[2], d[3]);
 	pr_info("[SHEALTH:%s] Frequency threshold : %u %u\n", __func__, cadence, freq);
@@ -1737,15 +1749,14 @@ int inv_get_shealth_cadence(struct inv_mpu_state *st, u8 start, u8 end, s32 cade
 		if(result)
 			goto read_fail;
 
-		cad = (signed short)(be16_to_cpup((short *)d));
+		cad = (unsigned short)(be16_to_cpup((short *)d));
 
 		if(walk > 0)
 			sign = 1;
 		else
 			sign = -1;
 
-		cadence[i - start] = sign * cad;
-
+		cadence[i - start] = cad & 0xFFFF;
 	}
 
 	return 0;
@@ -1758,7 +1769,7 @@ read_fail:
 int inv_reset_shealth_update_timer(struct inv_mpu_state *st)
 {
 	int result = 0;
-	u8 d[4]={0,};
+	u8 d[2]={0,};
 
 	/*reset cadence update timer*/
 	result = mpu_memory_read(st, st->i2c_addr,
@@ -1778,6 +1789,65 @@ read_fail:
 	return result;
 }
 
+/**
+ * @fn int inv_set_shealth_update_timer(struct inv_mpu_state *st)
+ * @brief Default value is 2999 during 1 minute.
+ */
+int inv_set_shealth_update_timer(struct inv_mpu_state *st, u16 timer)
+{
+	int result = 0;
+	u8 d[2]={0,};
+	u16 data = 0;
+
+	/*reset cadence update timer*/
+	result = mpu_memory_read(st, st->i2c_addr,
+			inv_dmp_get_address(KEY_S_HEALTH_MIN_CONST), 2, d);
+	if(result)
+		goto read_fail;
+
+	data = (u16) be16_to_cpup((__be16 *)(d));
+
+	//result = write_be32_key_to_mem(st, timer, KEY_S_HEALTH_MIN_CONST);
+	inv_write_2bytes(st, KEY_S_HEALTH_MIN_CONST, timer);
+
+	return result;
+
+read_fail:
+	pr_err("[SHEALTH] %s error\n", __func__);
+	return result;
+}
+
+int inv_get_shealth_update_timer(struct inv_mpu_state *st, char *buf)
+{
+	int result = 0;
+	u8 d[2]={0,};
+	u16 data = 0;
+
+	/*reset cadence update timer*/
+	result = mpu_memory_read(st, st->i2c_addr,
+			inv_dmp_get_address(KEY_S_HEALTH_MIN_CONST), 2, d);
+	if(result)
+		goto read_fail;
+
+	data = (u16) be16_to_cpup((__be16 *)(d));
+	pr_info("[SHEALTH] %s before timer=%d\n", __func__, data);
+
+	sprintf(buf, "%d\n", data);
+
+	return result;
+
+read_fail:
+	pr_err("[SHEALTH] %s error\n", __func__);
+	return result;
+}
+
+
+/**
+ * @fn int inv_clear_shealth_cadence(struct inv_mpu_state *st)
+ * @brief Clear cadence buffer in MPU
+ * @return Success/Fail
+ * @param st main structure of MPU
+ */
 int inv_clear_shealth_cadence(struct inv_mpu_state *st)
 {
 	int i, result;
@@ -1852,6 +1922,8 @@ int inv_enable_shealth(struct inv_mpu_state *st, bool en, bool irq_en)
 	st->shealth.enabled = en;
 	if(en) {
 		st->shealth.start_timestamp = inv_get_shealth_timestamp(st, true);
+		st->shealth.start_time_timeofday = get_time_timeofday();
+
 		st->shealth.interrupt_timestamp = -1;
 		st->shealth.stop_timestamp = -1;
 		st->shealth.valid_count = 0;
@@ -1864,10 +1936,16 @@ int inv_enable_shealth(struct inv_mpu_state *st, bool en, bool irq_en)
 		/* reset shealth interrupt period */
 		inv_set_shealth_interrupt_period(st,st->shealth.interrupt_duration);
 
+		/* set 1minute timer value */
+		st->shealth.tick_count = 2981;
+		inv_set_shealth_update_timer(st, st->shealth.tick_count);
+
 		inv_clear_shealth_cadence(st);
 	} else {
 		if(st->shealth.start_timestamp > 0) {
 			st->shealth.stop_timestamp = inv_get_shealth_timestamp(st, false);
+			st->shealth.stop_time_timeofday = get_time_timeofday();
+
 			inv_get_shealth_cadence(st, 0, 20 , st->shealth.cadence);
 			inv_get_shealth_valid_count(st);
 			pr_info("[SHEALTH:%s] Disable start:%lld valid_count %d\n", __func__, st->shealth.start_timestamp, st->shealth.valid_count);
@@ -1897,8 +1975,6 @@ s64 inv_get_shealth_timestamp(struct inv_mpu_state *st, bool start)
 	} else {
 		timestamp = st->shealth.interrupt_counter* st->shealth.interrupt_duration;
 		timestamp *= 60000000000LL;
-		pr_info("%s dd: timestamp = %lld, st->shealth.interrupt_counter=%d\n", __func__, timestamp,
-				st->shealth.interrupt_counter);
 
 		timestamp += start_timestamp +  inv_shealth_get_elapsed_time(st);
 	}
@@ -1946,7 +2022,8 @@ ssize_t inv_get_shealth_instant_cadence(struct inv_mpu_state *st, char* buf)
 	bool is_data_ready = false;
 	u16 valid_count = 0;
 
-	result = inv_get_shealth_cadence(st, 0, 20, cadence_array);
+	if (st->shealth.enabled)
+		result = inv_get_shealth_cadence(st, 0, 20, cadence_array);
 
 	if(st->shealth.enabled ||st->shealth.stop_timestamp > 0)
 		is_data_ready = true;
@@ -1975,14 +2052,15 @@ ssize_t inv_get_shealth_instant_cadence(struct inv_mpu_state *st, char* buf)
 	strcat(buf, concat);
 
 	/*valid count of cadence*/
-	valid_count = (u16)(((s32)((end_timestamp - start_timestamp) >> 30)) / 56) + 1;
+	if (st->shealth.enabled)
+		valid_count = (u16)(((s32)((end_timestamp - start_timestamp) >> 30)) / 56) + 1;
 	sprintf(concat, "%d,", valid_count);
 	strcat(buf, concat);
 
 	for( i = 0; i < SHEALTH_CADENCE_LEN; i++) {
 		cadence = cadence_array[i];
 
-		sprintf(concat, "%d,", cadence);
+		sprintf(concat, "%u,", cadence);
 		strcat(buf, concat);
 	}
 	strcat(buf, "\n");
@@ -2003,7 +2081,7 @@ static int inv_dry_run_dmp(struct inv_mpu_state *st)
 	result = inv_i2c_single_write(st, reg->user_ctrl, BIT_DMP_EN);
 	if (result)
 		return result;
-	msleep(400);
+	msleep(10);
 	result = inv_i2c_single_write(st, reg->user_ctrl, 0);
 	if (result)
 		return result;
@@ -2012,35 +2090,6 @@ static int inv_dry_run_dmp(struct inv_mpu_state *st)
 		return result;
 
 	return 0;
-}
-
-static void inv_test_reset(struct inv_mpu_state *st)
-{
-	int result, ii;
-	u8 d[0x80];
-
-	if (INV_MPU6500 != st->chip_type)
-		return;
-
-	for (ii = 3; ii < 0x80; ii++) {
-		/* don't read fifo r/w register */
-		if (ii != st->reg.fifo_r_w)
-			inv_i2c_read(st, ii, 1, &d[ii]);
-	}
-	result = inv_i2c_single_write(st, st->reg.pwr_mgmt_1, BIT_H_RESET);
-	if (result)
-		return;
-	msleep(POWER_UP_TIME);
-
-	for (ii = 3; ii < 0x80; ii++) {
-		/* don't write certain registers */
-		if ((ii != st->reg.fifo_r_w) &&
-		    (ii != st->reg.mem_r_w) &&
-		    (ii != st->reg.mem_start_addr) &&
-		    (ii != st->reg.fifo_count_h) &&
-		    ii != (st->reg.fifo_count_h + 1))
-			result = inv_i2c_single_write(st, ii, d[ii]);
-	}
 }
 
 /*
@@ -2090,7 +2139,6 @@ ssize_t inv_dmp_firmware_write(struct file *fp, struct kobject *kobj,
 	result = st->set_power_state(st, true);
 	if (result)
 		goto firmware_write_fail;
-	inv_test_reset(st);
 
 	result = inv_load_firmware(st, firmware, size);
 	if (result)

@@ -66,8 +66,6 @@ static DECLARE_COMPLETION(dsim_rd_comp);
 
 #define FIMD_REG_BASE			S5P_PA_FIMD0
 #define FIMD_MAP_SIZE			SZ_256K
-static void __iomem *s3c_fb_base;
-static void __iomem *s3c_2_base;
 
 static unsigned int dpll_table[15] = {
 	100, 120, 170, 220, 270,
@@ -124,7 +122,7 @@ static int s5p_mipi_dsi_register_fb(struct mipi_dsim_device *dsim)
 int s5p_mipi_dsi_wr_data(struct mipi_dsim_device *dsim,
 	u8 cmd, const u8 *buf, u32 len)
 {
-	int i,j;
+	int i;
 	unsigned char tempbuf[2] = {0, };
 	int remind, temp;
 	unsigned int payload;
@@ -209,6 +207,9 @@ int s5p_mipi_dsi_wr_data(struct mipi_dsim_device *dsim,
 	case MIPI_DSI_GENERIC_LONG_WRITE:
 	case MIPI_DSI_DCS_LONG_WRITE:
 	{
+#if defined CONFIG_BACKLIGHT_POLLING_AMOLED
+		int srcval, timeout = 3200; /* 32ms mipi timeout */
+#endif
 		INIT_COMPLETION(dsim_wr_comp);
 		s5p_mipi_dsi_clear_interrupt(dsim, INTSRC_SFR_FIFO_EMPTY);
 		temp = 0;
@@ -232,54 +233,28 @@ int s5p_mipi_dsi_wr_data(struct mipi_dsim_device *dsim,
 		}
 		/* put data into header fifo */
 		s5p_mipi_dsi_wr_tx_header(dsim, cmd, tempbuf);
-
+#if defined CONFIG_BACKLIGHT_POLLING_AMOLED
+		while(1) {
+			if((srcval=readl(dsim->reg_base +  S5P_DSIM_INTSRC) & 0x20000000)) {
+				break;
+			}
+			udelay(10);
+			if(--timeout <=0 ) {
+				pr_err("[ERROR] MIPI DSIM write timeout: 0x%08X\n", srcval);
+				ret = -ETIMEDOUT;
+				goto exit;
+			}
+		}
+		s5p_mipi_dsi_clear_interrupt(dsim, INTSRC_SFR_FIFO_EMPTY);
+#else
 		if (!wait_for_completion_interruptible_timeout(&dsim_wr_comp,
 				MIPI_WR_TIMEOUT)) {
-
-			s3c_fb_base = ioremap(FIMD_REG_BASE,FIMD_MAP_SIZE);
-			printk("\nfimd sfr_dump\n");
-			for(j=0; j<40;j++) {
-				if (j%4 == 0)
-					printk("\n");
-				printk("    %08x", readl(s3c_fb_base + j*4));
-				if (j == 39)
-					printk("\n\n");
-			}
-
-			printk("\nfimd 11c00100 \n");
-			for(j=0; j<40;j++) {
-				if (j%4 == 0)
-					printk("\n");
-				printk("    %08x", readl(s3c_fb_base + 100 +  j*4));
-				if (j == 39)
-					printk("\n\n");
-			}
-			iounmap(s3c_fb_base);
-
-			s3c_2_base = ioremap(0x11c20000,FIMD_MAP_SIZE);
-			printk("\nfimd 2_dump\n");
-			for(j=0; j<5;j++) {
-				if (j%4 == 0)
-					printk("\n");
-				printk("    %08x", readl(s3c_2_base + j*4));
-				if (j == 4)
-					printk("\n\n");
-			}
-			iounmap(s3c_2_base);
-
-			printk("\ndsim sfr_dump\n");
-			for(j=0; j<22;j++) {
-				if (j%4 == 0)
-					printk("\n");
-				printk("    %08x", readl((unsigned int)dsim->reg_base + j*4));
-				if (j == 21)
-					printk("\n");
-			}
 
 				dev_err(dsim->dev, "MIPI DSIM write Timeout!\n");
 				ret = -ETIMEDOUT;
 				goto exit;
 		}
+#endif
 		break;
 	}
 
@@ -906,8 +881,6 @@ static irqreturn_t s5p_mipi_dsi_interrupt_handler(int irq, void *dev_id)
 
 	spin_lock(&dsim->slock);
 
-	s5p_mipi_dsi_set_interrupt_mask(dsim, 0xffffffff, 1);
-
 	int_src = readl(dsim->reg_base + S5P_DSIM_INTSRC);
 #ifdef CONFIG_FB_I80_COMMAND_MODE
 	if (int_src & MIPI_FRAME_DONE) {
@@ -927,8 +900,6 @@ static irqreturn_t s5p_mipi_dsi_interrupt_handler(int irq, void *dev_id)
 	if (int_src & ERR_RX_ECC)
 		dev_err(dsim->dev, "RX ECC Multibit error was detected!\n");
 	s5p_mipi_dsi_clear_interrupt(dsim, int_src);
-
-	s5p_mipi_dsi_set_interrupt_mask(dsim, 0xfffffffe, 0);
 
 	spin_unlock(&dsim->slock);
 
@@ -986,7 +957,11 @@ static int s5p_mipi_dsi_enable(struct mipi_dsim_device *dsim)
 	s5p_mipi_dsi_clear_interrupt(dsim, 0xffffffff);
 
 	/* enable interrupts */
+#if defined CONFIG_BACKLIGHT_POLLING_AMOLED
+	s5p_mipi_dsi_set_interrupt_mask(dsim, RX_DAT_DONE, 0);
+#else
 	s5p_mipi_dsi_set_interrupt_mask(dsim, SFR_PL_FIFO_EMPTY | RX_DAT_DONE, 0);
+#endif
 
 	dsim->enabled = true;
 
@@ -1386,7 +1361,11 @@ static int s5p_mipi_dsi_probe(struct platform_device *pdev)
 	s5p_mipi_dsi_set_hs_enable(dsim);
 
 	/* enable interrupts */
+#if defined CONFIG_BACKLIGHT_POLLING_AMOLED
+	s5p_mipi_dsi_set_interrupt_mask(dsim, RX_DAT_DONE, 0);
+#else
 	s5p_mipi_dsi_set_interrupt_mask(dsim, SFR_PL_FIFO_EMPTY | RX_DAT_DONE, 0);
+#endif
 
 	mutex_init(&dsim_rd_wr_mutex);
 	mutex_init(&dsim->lock);
@@ -1420,6 +1399,7 @@ err_platform_get:
 err_clock_get:
 	kfree(dsim);
 	pm_runtime_put_sync(&pdev->dev);
+	pm_runtime_disable(&pdev->dev);
 	return ret;
 
 }

@@ -77,7 +77,7 @@ enum is_cmd {
 	IHC_AA_DONE,
 	IHC_NOT_READY,
 	IHC_FLASH_READY,
-#if (SUPPORTED_IS_CMD_VER >= 132)
+#if (SUPPORTED_IS_CMD_VER >= 131)
 	IHC_REPORT_ERR,
 #endif
 	IHC_COMMAND_END
@@ -86,7 +86,7 @@ enum is_cmd {
 /* supported command macros by F/W version */
 #define FW_HAS_SYS_CTRL_CMD	(SUPPORTED_IS_CMD_VER >= 132)
 #define FW_HAS_SENSOR_MODE_CMD	(SUPPORTED_IS_CMD_VER >= 131)
-#define FW_HAS_REPORT_ERR_CMD	(SUPPORTED_IS_CMD_VER >= 132)
+#define FW_HAS_REPORT_ERR_CMD	(SUPPORTED_IS_CMD_VER >= 131)
 
 enum is_reply {
 	ISR_DONE	= 0x2000,

@@ -152,8 +152,11 @@
 
 /*  Timeout in ms */
 #define CY_REQUEST_EXCLUSIVE_TIMEOUT 500
-#define CY_WATCHDOG_TIMEOUT         1000
+#define CY_REQUEST_EXCLUSIVE_TIMEOUT_GET_PARAM 1000
+#define CY_REQUEST_EXCLUSIVE_TIMEOUT_SET_PARAM 2000
+#define CY_WATCHDOG_TIMEOUT         3000
 #define CY_WATCHDOG_REQUEST_EXCLUSIVE_TIMEOUT 6000
+#define CY_WATCHDOG_RETRY 3
 #define CY_CORE_RESET_AND_WAIT_TIMEOUT		500
 #define CY_CORE_WAKEUP_TIMEOUT			500
 #define CY_HID_RESET_TIMEOUT			5000
@@ -766,11 +769,13 @@ struct cyttsp5_mt_data {
 #ifdef SAMSUNG_TOUCH_MODE
 	bool glove_enable;
 	bool glove_switch;
+	bool prevent_touch;
+	bool stylus_enable;
 #endif
 #ifdef SAMSUNG_PALM_MOTION
 	bool palm;
+	bool largeobj;
 #endif
-	bool prevent_touch;
 #if TOUCH_BOOSTER
 	u8 touch_pressed_num;
 	bool dvfs_lock_status;
@@ -859,8 +864,13 @@ struct cyttsp5_samsung_factory_data {
 	int num_all_nodes;
 
 	u32 touch_mode;
+	bool view_cover_closed;
+	bool stylus_enable;
+	u8 report_rate;
+
 	bool probe_done;
 	bool suspended;
+	bool is_inputmethod;
 };
 #endif
 
@@ -933,6 +943,10 @@ struct cyttsp5_core_commands {
 	struct cyttsp5_core_nonhid_cmd *cmd;
 };
 
+struct tsp_callbacks {
+	void (*inform_charger)(struct tsp_callbacks *tsp_cb, bool mode);
+};
+
 struct cyttsp5_core_data {
 	struct list_head node;
 	char core_id[20];
@@ -992,6 +1006,11 @@ struct cyttsp5_core_data {
 #ifdef VERBOSE_DEBUG
 	u8 pr_buf[CY_MAX_PRBUF_SIZE];
 #endif
+	void (*register_cb)(void *);
+	struct tsp_callbacks callbacks;
+	bool ta_status;
+	bool probe_done;
+	struct cyttsp5_sfd_panel_scan_data panel_scan_data;
 };
 
 struct cyttsp5_bus_ops {
@@ -1032,23 +1051,50 @@ enum pwc_data_type_list {
 };
 #endif
 
+#define CYTTSP5_ADAP_LOCK
 static inline int cyttsp5_adap_read_default(struct cyttsp5_core_data *cd,
 		void *buf, int size)
 {
+#ifdef CYTTSP5_ADAP_LOCK
+	int rc;
+	mutex_lock(&cd->adap_lock);
+	rc = cd->bus_ops->read_default(cd->dev, buf, size);
+	mutex_unlock(&cd->adap_lock);
+	return rc;
+#else
 	return cd->bus_ops->read_default(cd->dev, buf, size);
+#endif
 }
 
 static inline int cyttsp5_adap_read_default_nosize(struct cyttsp5_core_data *cd,
 		void *buf, int max)
 {
+#ifdef CYTTSP5_ADAP_LOCK
+	int rc;
+	mutex_lock(&cd->adap_lock);
+	rc = cd->bus_ops->read_default_nosize(cd->dev, buf, max);
+	mutex_unlock(&cd->adap_lock);
+	return rc;
+#else
 	return cd->bus_ops->read_default_nosize(cd->dev, buf, max);
+#endif
+
 }
 
 static inline int cyttsp5_adap_write_read_specific(struct cyttsp5_core_data *cd,
 		u8 write_len, u8 *write_buf, u8 *read_buf)
 {
+#ifdef CYTTSP5_ADAP_LOCK
+	int rc;
+	mutex_lock(&cd->adap_lock);
+	rc = cd->bus_ops->write_read_specific(cd->dev, write_len, write_buf,
+			read_buf);
+	mutex_unlock(&cd->adap_lock);
+	return rc;
+#else
 	return cd->bus_ops->write_read_specific(cd->dev, write_len, write_buf,
 			read_buf);
+#endif
 }
 
 static inline void *cyttsp5_get_dynamic_data(struct device *dev, int id)
@@ -1116,6 +1162,7 @@ static inline int cyttsp5_devtree_clean_pdata(struct device *adap_dev)
 int cyttsp5_probe(const struct cyttsp5_bus_ops *ops, struct device *dev,
 		u16 irq, size_t xfer_buf_size);
 int cyttsp5_release(struct cyttsp5_core_data *cd);
+int cyttsp5_fw_calibrate(struct device *dev);
 
 struct cyttsp5_core_commands *cyttsp5_get_commands(void);
 struct cyttsp5_core_data *cyttsp5_get_core_data(char *id);
@@ -1192,4 +1239,25 @@ extern const struct dev_pm_ops cyttsp5_pm_ops;
 int cyttsp5_core_suspend(struct device *dev);
 int cyttsp5_core_resume(struct device *dev);
 
+
+#define CY_MAX_NODE_NUM 900 /* 30 * 30 */
+#define CY_MAX_INPUT_HEADER_SIZE 12
+
+#define CY_RETRY_OR_EXIT(retry_cnt, retry_label, exit_label) \
+do { \
+	if (retry_cnt) \
+		goto retry_label; \
+	goto exit_label; \
+} while (0)
+
+#define CY_CALIBRATION_RETRY 3
+#define CY_CALIBRATION_RETRY_DELAY 1000 // in ms
+
+int cyttsp5_panel_scan_and_retrieve(struct device *dev,
+	u8 data_id, struct cyttsp5_sfd_panel_scan_data *panel_scan_data);
+#if 0
+#define CY_TEST_COUNT_MORE_THAN_S16
+#define CY_TEST_RECAL_ONE_SELF_NODE_32767
+#define CY_TEST_RAW_READ_WITHOUT_CAL
+#endif
 #endif /* _CYTTSP5_REGS_H */

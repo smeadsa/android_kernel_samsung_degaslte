@@ -387,20 +387,25 @@ __attribute__ ((unused))
 phys_addr_t __init universal222_cma_secure_region_reserve(struct cma_region *regions_secure,
 						const char *map, dma_addr_t alignment)
 {
-	size_t size_secure = 0;
+	size_t size_req = 0;
+	size_t size_secure;
 	struct cma_region *reg_sec;
 	phys_addr_t paddr_start, paddr_last;
 	int ret;
+	unsigned int order;
 
 	for (reg_sec = regions_secure; reg_sec && reg_sec->size; reg_sec++) {
 		reg_sec->size = PAGE_ALIGN(reg_sec->size);
-		size_secure += reg_sec->size;
+		size_req += reg_sec->size;
 	}
 
 	reg_sec--;
 
+	order = get_order(size_req);
+	alignment = 1 << (order + PAGE_SHIFT);
+	size_secure = ALIGN(size_req, alignment / 8);
 	if (size_secure) {
-		paddr_last = __memblock_alloc_base(reg_sec->size, alignment,
+		paddr_last = __memblock_alloc_base(size_secure, alignment,
 						MEMBLOCK_ALLOC_ANYWHERE);
 		if (paddr_last == 0) {
 			pr_err("CMA: Failed to reserve secure region\n");
@@ -408,9 +413,17 @@ phys_addr_t __init universal222_cma_secure_region_reserve(struct cma_region *reg
 		} else {
 			paddr_start = paddr_last;
 		}
+		pr_info("CMA: memblock allocated %#zx@%#x#%#x\n",
+			size_secure, paddr_start, alignment);
 	} else {
 		pr_err("No secure region is required");
 		return 0;
+	}
+
+	if ((size_secure - size_req) > 0) {
+		regions_secure->size += size_secure - size_req;
+		pr_info("CMA: augmenting size of '%s' to %#zx\n",
+					regions_secure->name, regions_secure->size);
 	}
 
 	do {
@@ -425,6 +438,8 @@ phys_addr_t __init universal222_cma_secure_region_reserve(struct cma_region *reg
 	} while (reg_sec-- != regions_secure);
 
 	memblock_free(paddr_last, alignment - size_secure);
+	pr_info("CMA: returned %#zx@%#x to memblock\n",
+				alignment - size_secure, paddr_last);
 
 	return paddr_start;
 }

@@ -60,6 +60,12 @@ enum fimc_is_sensor_output_entity {
 	FIMC_IS_SENSOR_OUTPUT_FRONT,
 };
 
+enum fimc_is_sensor_force_stop {
+	FIMC_IS_BAD_FRAME_STOP = 0,
+	FIMC_IS_MIF_THROTTLING_STOP = 1,
+	FIMC_IS_FLITE_OVERFLOW_STOP = 2
+};
+
 struct fimc_is_sensor_cfg {
 	u32 width;
 	u32 height;
@@ -119,6 +125,7 @@ enum fimc_is_sensor_state {
 	FIMC_IS_SENSOR_GPIO_ON,
 	FIMC_IS_SENSOR_DRIVING,
 	FIMC_IS_SENSOR_FRONT_START,
+	FIMC_IS_SENSOR_FRONT_DTP_STOP,
 	FIMC_IS_SENSOR_BACK_START,
 	FIMC_IS_SENSOR_BACK_NOWAIT_STOP
 };
@@ -171,6 +178,7 @@ struct fimc_is_device_sensor {
 	/* ENABLE_DTP */
 	bool						dtp_check;
 	struct timer_list				dtp_timer;
+	unsigned long					force_stop;
 
 	struct exynos_platform_fimc_is_sensor		*pdata;
 	void						*private_data;

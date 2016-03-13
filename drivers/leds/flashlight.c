@@ -12,7 +12,7 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/mfd/flashlight.h>
+#include <linux/leds/flashlight.h>
 #include <linux/ctype.h>
 #include <linux/err.h>
 #include <linux/slab.h>
@@ -275,9 +275,8 @@ struct flashlight_device *flashlight_device_register(const char *name,
 		return ERR_PTR(-ENOMEM);
 
 	mutex_init(&flashlight_dev->ops_lock);
-#if 0 /* Disable class assign codes by Samsung.  */
+
 	flashlight_dev->dev.class = flashlight_class;
-#endif
 	flashlight_dev->dev.parent = parent;
 	flashlight_dev->dev.release = flashlight_device_release;
 	dev_set_name(&flashlight_dev->dev, name);
@@ -319,14 +318,13 @@ int flashlight_list_color_temperature(
                         struct flashlight_device *flashlight_dev,
                         int selector)
 {
-    if (flashlight_dev->ops &&
-        flashlight_dev->ops->list_color_temperature)
-    {
-        return flashlight_dev->ops->list_color_temperature(
-	        flashlight_dev,
-	        selector);
-    }
-    return -EINVAL;
+	if (flashlight_dev->ops &&
+	    flashlight_dev->ops->list_color_temperature) {
+		return flashlight_dev->ops->list_color_temperature(
+			       flashlight_dev,
+			       selector);
+	}
+	return -EINVAL;
 }
 EXPORT_SYMBOL(flashlight_list_color_temperature);
 
@@ -340,8 +338,7 @@ int flashlight_set_color_temperature(
 	if ((flashlight_dev->ops ==  NULL) ||
 		(flashlight_dev->ops->set_color_temperature==NULL))
 		return -EINVAL;
-	for (selector=0; ;selector++)
-	{
+	for (selector = 0; ; selector++) {
 		rc = flashlight_list_color_temperature(flashlight_dev, selector);
 		if (rc < 0)
 			return rc;

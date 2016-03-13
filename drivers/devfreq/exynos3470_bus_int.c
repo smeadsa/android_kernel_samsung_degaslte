@@ -1016,13 +1016,13 @@ static __devinit int exynos4270_busfreq_int_probe(struct platform_device *pdev)
 	err = sysfs_create_group(&data->devfreq->dev.kobj, &busfreq_int_attr_group);
 	if (err) {
 		pr_err("DEVFREQ(INT) : Failed create time_in_state sysfs\n");
-		goto err_devfreq_add;
+		goto err_sysfs_create;
 	}
 
 	err = device_create_file(&data->devfreq->dev, &dev_attr_available_frequencies);
 	if (err) {
 		pr_err("DEVFREQ(INT) : Failed create available_frequencies sysfs\n");
-		goto err_devfreq_add;
+		goto err_dev_create;
 	}
 
 	/* Add sysfs for freq_table */
@@ -1041,15 +1041,20 @@ static __devinit int exynos4270_busfreq_int_probe(struct platform_device *pdev)
 
 	return 0;
 
-err_devfreq_add:
+err_dev_create:
+	sysfs_remove_group(&data->devfreq->dev.kobj, &busfreq_int_attr_group);
+err_sysfs_create:
+	devfreq_unregister_opp_notifier(dev, data->devfreq);
 	devfreq_remove_device(data->devfreq);
-err_target_opp:
+err_devfreq_add:
+	exynos4270_ppmu_put(data->ppmu);
 err_ppmu_get:
-	if (data->vdd_int)
-		regulator_put(data->vdd_int);
+err_target_opp:
+	regulator_put(data->vdd_int);
 err_regulator:
 	platform_set_drvdata(pdev, NULL);
 err_opp_add:
+	mutex_destroy(&data->lock);
 	kfree(data);
 
 	return err;

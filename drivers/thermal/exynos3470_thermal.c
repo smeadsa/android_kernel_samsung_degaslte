@@ -1360,6 +1360,8 @@ static int exynos_tmu_resume(struct platform_device *pdev)
 		exynos_tmu_control(pdev, i, on);
 	}
 
+	exynos_memory_auto_refresh(old_hot, &old_hot);
+
 	return 0;
 }
 #else

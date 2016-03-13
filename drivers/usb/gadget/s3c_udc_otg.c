@@ -1321,7 +1321,8 @@ static int s3c_udc_probe(struct platform_device *pdev)
 	dev->clk = clk_get(&pdev->dev, "otg");
 	if (IS_ERR(dev->clk)) {
 		dev_err(&pdev->dev, "Failed to get clock\n");
-		return -ENXIO;
+        retval = -ENXIO;
+        goto clk_dev_error;
 	}
 
 	dev->usb_ctrl = dma_alloc_coherent(&pdev->dev,
@@ -1398,6 +1399,10 @@ err_get_data_buf:
 			dev->usb_ctrl, dev->usb_ctrl_dma);
 err_get_ctrl_buf:
 	clk_put(dev->clk);
+clk_dev_error:
+    wake_lock_destroy(&dev->usbd_wake_lock);
+    wake_lock_destroy(&dev->usb_cb_wake_lock);
+
 	return retval;
 }
 

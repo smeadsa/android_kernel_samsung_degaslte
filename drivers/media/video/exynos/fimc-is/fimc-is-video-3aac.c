@@ -140,7 +140,7 @@ static int fimc_is_3aac_video_open(struct file *file)
 	info("[3A%dC:V:%d] %s\n", GET_3AAC_ID(video), vctx->instance, __func__);
 
 	refcount = atomic_read(&core->video_isp.refcount);
-	if (refcount > FIMC_IS_MAX_NODES) {
+	if (refcount > FIMC_IS_MAX_NODES || refcount < 1) {
 		err("invalid ischain refcount(%d)", refcount);
 		close_vctx(file, video, vctx);
 		ret = -EINVAL;
@@ -652,6 +652,7 @@ static int fimc_is_3aac_stop_streaming(struct vb2_queue *vbq)
 
 static void fimc_is_3aac_buffer_queue(struct vb2_buffer *vb)
 {
+	int ret = 0;
 	struct fimc_is_video_ctx *vctx = vb->vb2_queue->drv_priv;
 	struct fimc_is_queue *queue;
 	struct fimc_is_video *video;
@@ -670,7 +671,16 @@ static void fimc_is_3aac_buffer_queue(struct vb2_buffer *vb)
 	subdev = &device->taac;
 
 	fimc_is_queue_buffer_queue(queue, video->vb2, vb);
-	fimc_is_subdev_buffer_queue(subdev, vb->v4l2_buf.index);
+	if (ret) {
+		merr("fimc_is_queue_buffer_queue is fail(%d)", vctx, ret);
+		return;
+	}
+
+	ret = fimc_is_subdev_buffer_queue(subdev, vb->v4l2_buf.index);
+	if (ret) {
+		merr("fimc_is_subdev_buffer_queue is fail(%d)", vctx, ret);
+		return;
+	}
 }
 
 static int fimc_is_3aac_buffer_finish(struct vb2_buffer *vb)

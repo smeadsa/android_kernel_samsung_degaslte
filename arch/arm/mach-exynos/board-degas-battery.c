@@ -787,7 +787,7 @@ static void charger_gpio_init(void)
 	s3c_gpio_setpull(GPIO_CHG_STAT, S3C_GPIO_PULL_NONE);
 
 	s3c_gpio_cfgpin(GPIO_CHG_EN, S3C_GPIO_OUTPUT);
-	s3c_gpio_setpull(GPIO_CHG_EN, S3C_GPIO_PULL_NONE);
+	s3c_gpio_setpull(GPIO_CHG_EN, S3C_GPIO_PULL_DOWN);
 
 #if 0
 	s3c_gpio_cfgpin(GPIO_CHG_STAT, S3C_GPIO_INPUT);

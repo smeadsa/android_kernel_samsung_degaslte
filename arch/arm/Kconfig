@@ -245,6 +245,12 @@ config GENERIC_BUG
 	def_bool y
 	depends on BUG
 
+config SEC_FACTORY
+        bool "when it comes to sec factory mode"
+        default n
+        help
+          It will support a sec factory mode
+
 source "init/Kconfig"
 
 source "kernel/Kconfig.freezer"

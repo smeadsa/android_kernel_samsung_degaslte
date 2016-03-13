@@ -1,7 +1,7 @@
 #ifndef __EA8061V_PARAM_H__
 #define __EA8061V_PARAM_H__
 
-#define GAMMA_PARAM_SIZE	 66
+#define GAMMA_PARAM_SIZE	 33
 #define ACL_PARAM_SIZE	ARRAY_SIZE(SEQ_ACL_OFF)
 #define ELVSS_PARAM_SIZE	ARRAY_SIZE(SEQ_ELVSS_CONDITION_SET)
 #define AID_PARAM_SIZE	ARRAY_SIZE(SEQ_AID_SET)
@@ -76,24 +76,34 @@ enum {
 	GAMMA_MAX
 };
 
-static const unsigned char SEQ_APPLY_LEVEL_2_KEY_ENABLE[] = {
+static const unsigned char SEQ_APPLY_LEVEL_2_KEY_UNLOCK[] = {
 	0xF0,
 	0x5A, 0x5A
 };
 
-static const unsigned char SEQ_APPLY_LEVEL_3_KEY_ENABLE[] = {
-	0xFC,
-	0x5A, 0x5A
-};
-
-static const unsigned char SEQ_APPLY_LEVEL_3_KEY_DISABLE[] = {
-	0xFC,
-	0x5A, 0x5A
-};
-
-static const unsigned char SEQ_APPLY_MTP_KEY_ENABLE[] = {
+static const unsigned char SEQ_APPLY_MTP_KEY_UNLOCK[] = {
 	0xF1,
 	0x5A, 0x5A
+};
+
+static const unsigned char SEQ_APPLY_LEVEL_2_KEY_LOCK[] = {
+	0xF0,
+	0xA5, 0xA5
+};
+
+static const unsigned char SEQ_APPLY_MTP_KEY_LOCK[] = {
+	0xF1,
+	0xA5, 0xA5
+};
+
+static const unsigned char SEQ_APPLY_LEVEL_3_KEY_UNLOCK[] = {
+	0xFC,
+	0x5A, 0x5A
+};
+
+static const unsigned char SEQ_APPLY_LEVEL_3_KEY_LOCK[] = {
+	0xFC,
+	0xA5, 0xA5
 };
 
 static const unsigned char SEQ_SLEEP_OUT[] = {
@@ -175,7 +185,7 @@ static const unsigned char *pSEQ_AID_SET = SEQ_AID_SET;
 
 static const unsigned char SEQ_ELVSS_CONDITION_SET[] = {
 	0xB6,
-	0x48, 0x8A,
+	0x4C, 0x8A,
 };
 
 static const unsigned int DIM_TABLE[GAMMA_MAX] = {
@@ -188,17 +198,21 @@ static const unsigned int DIM_TABLE[GAMMA_MAX] = {
 	282, 300, 316, 333, 350, 500,
 };
 
-static const unsigned int ELVSS_DIM_TABLE[] = {
+static const unsigned int ELVSS_DIM_TABLE_RevABC[] = {
 	77, 82, 87, 93, 98, 105, 111, 119, 126, 134,
 	143, 152, 162, 172, 183, 195, 207, 220, 234, 249,
 	265, 282, 300, 316, 333, 350, 500
 };
 
-static const unsigned int *pELVSS_DIM_TABLE = ELVSS_DIM_TABLE;
+static const unsigned int ELVSS_DIM_TABLE_RevDE[] = {
+	72, 77, 82, 87, 93, 98, 105, 111, 119, 126,
+	134, 143, 152, 162, 172, 183, 195, 207, 220, 234,
+	249, 265, 282, 300, 316, 333, 350, 500
+};
 
-static unsigned int ELVSS_STATUS_MAX = ARRAY_SIZE(ELVSS_DIM_TABLE);
-#define ELVSS_STATUS_HBM	ELVSS_STATUS_MAX - 1
-#define ELVSS_STATUS_350	ELVSS_STATUS_MAX - 2
+static const unsigned int *pELVSS_DIM_TABLE = ELVSS_DIM_TABLE_RevABC;
+
+static unsigned int ELVSS_STATUS_MAX = ARRAY_SIZE(ELVSS_DIM_TABLE_RevABC);
 
 enum {
 	TSET_25_DEGREES,
@@ -214,10 +228,32 @@ static const unsigned char TSET_TABLE[TSET_STATUS_MAX] = {
 };
 
 
-static const unsigned char ELVSS_TABLE[] = {
+static const unsigned char ELVSS_TABLE_RevABC[] = {
 	0x98, 0x97, 0x97, 0x96, 0x96, 0x95, 0x95, 0x94, 0x93, 0x92,
 	0x92, 0x91, 0x90, 0x8F, 0x8E, 0x8D, 0x8D, 0x8D, 0x8D, 0x8D,
 	0x8D, 0x8D, 0x8C, 0x8B, 0x8B, 0x8A,
+};
+
+static const unsigned char ELVSS_TABLE_RevD[] = {
+	0x97, 0x96, 0x96, 0x96, 0x95, 0x95, 0x94, 0x94, 0x93, 0x93,
+	0x92, 0x92, 0x91, 0x90, 0x90, 0x90, 0x90, 0x90, 0x8F, 0x8F,
+	0x8E, 0x8E, 0x8D, 0x8C, 0x8B, 0x8B, 0x8A
+};
+
+static const unsigned char ELVSS_TABLE_RevE[] = {
+	0x96, 0x95, 0x95, 0x95, 0x94, 0x93, 0x93, 0x92, 0x91, 0x91,
+	0x90, 0x90, 0x8F, 0x8F, 0x8F, 0x8E, 0x8E, 0x8E, 0x8E, 0x8E,
+	0x8E, 0x8D, 0x8C, 0x8C, 0x8B, 0x8B, 0x8A
+};
+
+static const unsigned char *pELVSS_TABLE = ELVSS_TABLE_RevABC;
+
+static const unsigned char SEQ_ACL_OPR_32FRAME[] = {
+	0xB5, 0x29,
+};
+
+static const unsigned char SEQ_ACL_OPR_16FRAME[] = {
+	0xB5, 0x21,
 };
 
 enum {

@@ -227,7 +227,7 @@ static int fimc_is_companion_gpio_on(struct fimc_is_device_companion *device)
 {
 	int ret = 0;
 	struct exynos_platform_fimc_is_sensor *pdata;
-#ifdef CONFIG_SOC_EXYNOS5430
+#if defined(CONFIG_SOC_EXYNOS5430) || defined(CONFIG_SOC_EXYNOS5433)
 	struct fimc_is_core *core;
 	struct fimc_is_from_info *sysfs_finfo;
 	struct exynos_sensor_pin (*pin_ctrls)[2][GPIO_CTRL_MAX];
@@ -238,9 +238,9 @@ static int fimc_is_companion_gpio_on(struct fimc_is_device_companion *device)
 	BUG_ON(!device->pdata);
 
 	pdata = device->pdata;
-#ifdef CONFIG_SOC_EXYNOS5430
+#if defined(CONFIG_SOC_EXYNOS5430) || defined(CONFIG_SOC_EXYNOS5433)
 	pin_ctrls = pdata->pin_ctrls;
-	core = device->core;
+	core = (struct fimc_is_core *)dev_get_drvdata(fimc_is_dev);
 #endif
 
 	if (test_bit(FIMC_IS_COMPANION_GPIO_ON, &device->state)) {
@@ -254,7 +254,7 @@ static int fimc_is_companion_gpio_on(struct fimc_is_device_companion *device)
 		goto p_err;
 	}
 
-#ifdef CONFIG_SOC_EXYNOS5430
+#if defined(CONFIG_SOC_EXYNOS5430) || defined(CONFIG_SOC_EXYNOS5433)
 	if(core->use_sensor_dynamic_voltage_mode) {
 		fimc_is_sec_get_sysfs_finfo(&sysfs_finfo);
 		if (sysfs_finfo->header_ver[0] == 'F' && sysfs_finfo->header_ver[4] == 'L') {
@@ -326,7 +326,7 @@ int fimc_is_companion_open(struct fimc_is_device_companion *device)
 
 	BUG_ON(!device);
 
-	core = device->core;
+	core = (struct fimc_is_core *)dev_get_drvdata(fimc_is_dev);
 	spi_gpio = &core->spi_gpio;
 
 	if (test_bit(FIMC_IS_COMPANION_OPEN, &device->state)) {
@@ -338,11 +338,13 @@ int fimc_is_companion_open(struct fimc_is_device_companion *device)
 	device->companion_status = FIMC_IS_COMPANION_OPENNING;
 #if defined(CONFIG_PM_RUNTIME)
 	pm_runtime_get_sync(&device->pdev->dev);
+#else
+	fimc_is_companion_runtime_resume(&device->pdev->dev);
 #endif
 	ret = fimc_is_sec_fw_sel(core, &device->pdev->dev, fw_name, setf_name, 0);
 	if (ret < 0) {
 		err("failed to select firmware (%d)", ret);
-		goto p_err;
+		goto p_err_pm;
 	}
 
 	ret = fimc_is_sec_concord_fw_sel(core, &device->pdev->dev, companion_fw_name, master_setf_name, mode_setf_name, 0);
@@ -361,7 +363,7 @@ int fimc_is_companion_open(struct fimc_is_device_companion *device)
 		ret = fimc_is_comp_loadfirm(core);
 		if (ret) {
 			err("fimc_is_comp_loadfirm() fail");
-			goto p_err;
+			goto p_err_pm;
                 }
 		ret = fimc_is_comp_loadcal(core);
 		if (ret) {
@@ -372,7 +374,7 @@ int fimc_is_companion_open(struct fimc_is_device_companion *device)
 		ret = fimc_is_comp_loadsetf(core);
 		if (ret) {
 			err("fimc_is_comp_loadsetf() fail");
-			goto p_err;
+			goto p_err_pm;
 		}
 	}
 
@@ -395,8 +397,18 @@ int fimc_is_companion_open(struct fimc_is_device_companion *device)
 	device->companion_status = FIMC_IS_COMPANION_OPENDONE;
 	fimc_is_companion_wakeup(device);
 
+	info("[COMP:D] %s(%d)status(%d)\n", __func__, ret, device->companion_status);
+	return ret;
+
+p_err_pm:
+#if defined(CONFIG_PM_RUNTIME)
+	pm_runtime_put_sync(&device->pdev->dev);
+#else
+	fimc_is_companion_runtime_suspend(&device->pdev->dev);
+#endif
+
 p_err:
-	info("[COMP:D] %s(%d)status(%d)\n", __func__, ret,device->companion_status);
+	err("[COMP:D] open fail(%d)status(%d)", ret, device->companion_status);
 	return ret;
 }
 
@@ -414,6 +426,8 @@ int fimc_is_companion_close(struct fimc_is_device_companion *device)
 
 #if defined(CONFIG_PM_RUNTIME)
 	pm_runtime_put_sync(&device->pdev->dev);
+#else
+	fimc_is_companion_runtime_suspend(&device->pdev->dev);
 #endif
 
 	clear_bit(FIMC_IS_COMPANION_OPEN, &device->state);
@@ -478,7 +492,6 @@ static int fimc_is_companion_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, device);
 	device_init_wakeup(&pdev->dev, true);
 	core->companion = device;
-	device->core = core;
 
 	/* init state */
 	clear_bit(FIMC_IS_COMPANION_OPEN, &device->state);

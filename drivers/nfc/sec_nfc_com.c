@@ -38,6 +38,7 @@
 #include <linux/fs.h>
 #include <asm/uaccess.h>
 #include <linux/nfc/sec_nfc_com.h>
+#include <linux/wakelock.h>
 #ifdef CONFIG_SEC_NFC_CLK_REQ
 #include <linux/interrupt.h>
 #endif
@@ -86,6 +87,7 @@ struct sec_nfc_info {
 #ifdef	CONFIG_SEC_NFC_CLK_REQ
 	bool clk_ctl;
 #endif
+	struct wake_lock wake_lock;
 };
 
 #ifdef CONFIG_SEC_NFC_IF_I2C
@@ -98,6 +100,8 @@ static irqreturn_t sec_nfc_irq_thread_fn(int irq, void *dev_id)
 	mutex_unlock(&info->i2c_info.read_mutex);
 
 	wake_up_interruptible(&info->i2c_info.read_wait);
+
+	wake_lock_timeout(&info->wake_lock, 2 * HZ);
 
 	return IRQ_HANDLED;
 }
@@ -331,7 +335,7 @@ static irqreturn_t sec_nfc_clk_irq_thread(int irq, void *dev_id)
 	struct sec_nfc_platform_data *pdata = info->pdata;
 	int value;
 
-	value = gpio_get_value(pdata->clk_req) > 0 ? 1 : 0;
+	value = gpio_get_value(pdata->clk_req) > 0 ? 0 : 1;
 	gpio_set_value(pdata->clk_enable, value);
 
 	return IRQ_HANDLED;
@@ -388,8 +392,14 @@ static void sec_nfc_set_mode(struct sec_nfc_info *info,
 		gpio_set_value(pdata->ven, SEC_NFC_PW_ON);
 		sec_nfc_clk_ctl_enable(info);
 		msleep(SEC_NFC_VEN_WAIT_TIME/2);
+#ifdef CONFIG_SEC_NFC_IF_I2C
+		enable_irq_wake(info->i2c_info.i2c_dev->irq);
+#endif
 	} else {
 		sec_nfc_clk_ctl_disable(info);
+#ifdef CONFIG_SEC_NFC_IF_I2C
+		disable_irq_wake(info->i2c_info.i2c_dev->irq);
+#endif
 	}
 
 	sec_nfc_i2c_irq_clear(info);
@@ -433,13 +443,19 @@ static long sec_nfc_ioctl(struct file *file, unsigned int cmd,
 
 #elif defined(CONFIG_SEC_NFC_PRODUCT_N5)
 	case SEC_NFC_SLEEP:
-		if (info->mode != SEC_NFC_MODE_BOOTLOADER)
+		if (info->mode != SEC_NFC_MODE_BOOTLOADER) {
+			if(wake_lock_active(&info->wake_lock))
+				wake_unlock(&info->wake_lock);
 			gpio_set_value(pdata->wake, SEC_NFC_WAKE_SLEEP);
+		}
 		break;
 
 	case SEC_NFC_WAKEUP:
-		if (info->mode != SEC_NFC_MODE_BOOTLOADER)
+		if (info->mode != SEC_NFC_MODE_BOOTLOADER) {
 			gpio_set_value(pdata->wake, SEC_NFC_WAKE_UP);
+			if(!wake_lock_active(&info->wake_lock))
+				wake_lock(&info->wake_lock);
+		}
 		break;
 #endif
 
@@ -576,6 +592,7 @@ static int __devinit __sec_nfc_probe(struct device *dev)
 		gpio_direction_output(pdata->firm, SEC_NFC_FW_OFF);
 	}
 
+	wake_lock_init(&info->wake_lock, WAKE_LOCK_SUSPEND, "NFCWAKE");
 
 	dev_dbg(dev, "%s: info: %p, pdata %p\n", __func__, info, pdata);
 
@@ -585,6 +602,7 @@ err_gpio_firm:
 	gpio_free(pdata->ven);
 err_gpio_ven:
 err_dev_reg:
+	mutex_destroy(&info->mutex);
 err_info_alloc:
 	kfree(info);
 err_pdata:
@@ -602,6 +620,7 @@ static int __devexit __sec_nfc_remove(struct device *dev)
 	sec_nfc_set_mode(info, SEC_NFC_MODE_OFF);
 	gpio_free(pdata->ven);
 	if (pdata->firm) gpio_free(pdata->firm);
+	wake_lock_destroy(&info->wake_lock);
 
 	kfree(info);
 

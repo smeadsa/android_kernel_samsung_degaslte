@@ -39,8 +39,6 @@
 /* Enable the core switcher functionality */
 #define TBASE_CORE_SWITCHER
 
-#define MC_VM_UNMAP
-
 /* Enable Fastcall worker thread */
 #define MC_FASTCALL_WORKER_THREAD
 

@@ -236,7 +236,6 @@ void tcp_select_initial_window(int __space, __u32 mss,
 		int init_cwnd = sysctl_tcp_default_init_rwnd;
 		if (mss > 1460)
 			init_cwnd = max_t(u32, (1460 * init_cwnd) / mss, 2);
-
 		/* when initializing use the value from init_rcv_wnd
 		 * rather than the default from above
 		 */

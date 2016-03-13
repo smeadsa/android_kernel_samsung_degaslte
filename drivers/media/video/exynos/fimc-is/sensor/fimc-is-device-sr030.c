@@ -1974,6 +1974,7 @@ int sensor_sr030_probe(struct i2c_client *client,
 	if (!module->private_data) {
 		err("private_data is NULL");
 		ret = -ENOMEM;
+		kfree(subdev_module);
 		goto p_err;
 	}
 

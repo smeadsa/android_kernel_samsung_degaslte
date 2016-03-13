@@ -585,13 +585,17 @@ static int cpufreq_interactive_eagle_speedchange_task(void *data)
 	unsigned long flags;
 	struct cpufreq_interactive_eagle_cpuinfo *pcpu;
 
-	while (!kthread_should_stop()) {
+	while (1) {
 		set_current_state(TASK_INTERRUPTIBLE);
 		spin_lock_irqsave(&speedchange_cpumask_lock, flags);
 
 		if (cpumask_empty(&speedchange_cpumask)) {
 			spin_unlock_irqrestore(&speedchange_cpumask_lock,
 					       flags);
+
+			if (kthread_should_stop())
+				break;
+
 			schedule();
 
 			if (kthread_should_stop())

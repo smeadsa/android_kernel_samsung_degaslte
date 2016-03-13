@@ -23,6 +23,8 @@
 #include <linux/err.h>
 #include <asm/setup.h>
 
+#include <linux/input.h>
+
 #include "../w1.h"
 #include "../w1_int.h"
 #include "../w1_family.h"
@@ -86,11 +88,14 @@
 #define SECRET_EEPROM_DELAY      90
 #endif
 
+/* model dependent value */
 #define ATAG_COVER_STR	0x54410008
 #define ID_MIN		0
-#define ID_MAX		3
+#define ID_MAX		5
 #define CO_MIN		0
-#define CO_MAX		10
+#define CO_MAX		13
+#define ID_DEFAULT	1
+#define CO_DEFAULT	1
 #define RETRY_LIMIT	10
 
 static unsigned short slave_crc16;
@@ -99,7 +104,11 @@ static int special_mode;
 static char special_values[2];
 static char rom_no[8];
 
-int id = 2, color;
+int verification = -1, id = 2, color;
+char g_sn[14];
+#ifdef CONFIG_W1_CF
+int cf_node = -1;
+#endif	/* CONFIG_W1_CF */
 
 #define READ_EOP_BYTE(seg) (32-seg*4)
 
@@ -595,6 +604,77 @@ int w1_ds28el15_write_authblockMAC(struct w1_slave *sl, int page,
 	else
 		return cs;
 }
+
+#ifdef CONFIG_W1_CF
+/*  Read memory check. Multiple pages can
+ *  be read without re-selecting the device using the continue flag.
+ *
+ *  Parameters
+ *	seg    - segment number(0~7) in page
+ *	page   - page number where the block to read is located (0 to 15)
+ *	rdbuf  - 32 byte buffer to contain the data to read
+ *	length - length to read (allow jsut segment(4bytes) unit) (4, 8, 16, ... , 64)
+ *
+ *  Returns
+ *	0    - block read and verified CRC
+ *	else - Failed to write block (no presence or invalid CRC16)
+ */
+int w1_ds28el15_read_memory_check(struct w1_slave *sl, int seg, int page, uchar *rdbuf, int length)
+{
+	uchar buf[256];
+	int cnt, i, offset;
+
+	cnt = 0;
+	offset = 0;
+
+	if (!sl)
+		return -ENODEV;
+
+	// Check presence detect
+	if (w1_reset_overdrive_select_slave(sl))
+		return -1;
+
+	buf[cnt++] = CMD_READ_MEMORY;
+	buf[cnt++] = (seg<<5) | page;	 // address
+
+	// Send command
+	w1_write_block(sl->master, &buf[0], 2);
+
+	// Read CRC
+	w1_read_block(sl->master, &buf[cnt], 2);
+	cnt += 2;
+
+	offset = cnt;
+
+	// read data and CRC16
+	w1_read_block(sl->master, &buf[cnt], length+2);
+	cnt+=length+2;
+
+	// check the first CRC16
+	slave_crc16 = 0;
+	for (i = 0; i < offset; i++)
+		docrc16(buf[i]);
+
+	if (slave_crc16 != 0xB001)
+		return -1;
+
+	if (READ_EOP_BYTE(seg) == length) {
+		// check the second CRC16
+		slave_crc16 = 0;
+
+		for (i = offset; i < cnt; i++)
+			docrc16(buf[i]);
+
+		if (slave_crc16 != 0xB001)
+			return -1;
+	}
+
+	// copy the data to the read buffer
+	memcpy(rdbuf,&buf[offset],length);
+
+	return 0;
+}
+#endif	/* CONFIG_W1_CF */
 
 /*
  *  Read memory. Multiple pages can
@@ -1778,6 +1858,22 @@ static ssize_t w1_ds28el15_check_color(struct device *device,
 	return sprintf(buf, "%d\n", color);
 }
 
+#ifdef CONFIG_W1_CF
+static ssize_t w1_ds28el15_cf(struct device *device,
+			struct device_attribute *attr, char *buf);
+
+static struct device_attribute w1_cf_attr =
+			__ATTR(cf, S_IRUGO, w1_ds28el15_cf, NULL);
+
+// check cf_node cover or not
+static ssize_t w1_ds28el15_cf(struct device *device,
+			struct device_attribute *attr, char *buf)
+{
+	// read mem
+	return sprintf(buf, "%d\n", cf_node);
+}
+#endif	/* CONFIG_W1_CF */
+
 static ssize_t w1_ds28el15_check_id(struct device *device,
 	struct device_attribute *attr, char *buf);
 
@@ -1827,6 +1923,67 @@ static int w1_ds28el15_get_buffer(struct w1_slave *sl, uchar *rdbuf, int retry_l
 	return ret;
 }
 
+static const int sn_cdigit[19] = {
+        0x0e, 0x0d, 0x1f, 0x0b, 0x1c,
+        0x12, 0x0f, 0x1e, 0x0a, 0x13,
+        0x14, 0x15, 0x19, 0x16, 0x17,
+        0x20, 0x1b, 0x1d, 0x11};
+
+static bool w1_ds28el15_check_digit(uchar *sn)
+{
+	int i, tmp1 = 0, tmp2 = 0;
+	int cdigit = sn[3];
+
+	for (i = 4 ; i < 10 ; i++)
+		tmp1 += sn[i];
+
+/* Debugging log, need to remove */
+	tmp1 += sn[4] * 5;
+	tmp2 = (tmp1 * sn[9] * sn[13]) % 19;
+
+	tmp1 = (sn[10] + sn[12]) * 3 + (sn[11] + sn[13]) * 6 + 14;
+	pr_info("%s: check digit %x\n", __func__, sn_cdigit[((tmp1 + tmp2) % 19)]);
+
+	if (cdigit == sn_cdigit[((tmp1 + tmp2) % 19)])
+		return true;
+	else
+		return false;
+}
+
+static uchar w1_ds28el15_char_convert(uchar c)
+{
+	char ctable[36] = {
+	'0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+	'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'J', 'K',
+	'L', 'M', 'N', 'P', 'Q', 'R', 'S', 'T', 'V', 'W',
+	'X', 'Y', 'Z', 'I', 'O', 'U'};
+
+	return ctable[c];
+}
+
+static void w1_ds28el15_slave_sn(uchar *rdbuf)
+{
+	int i;
+	u8 sn[15];
+
+/* To restrict debugging log */
+	sn[14] = 0;
+
+	if (w1_ds28el15_check_digit(&rdbuf[4])) {
+		for (i = 0 ; i < 14 ; i++)
+			sn[i] = w1_ds28el15_char_convert(rdbuf[i + 4]);
+
+		pr_info("%s: %s\n", __func__, sn);
+		for (i = 0 ; i < 14 ; i++)
+			g_sn[i] = sn[13 - i];
+	} else {
+/* We will not convert here, because the check digit was wrong */
+/* But, NOW below for the test. Keep the every string in sysfs */
+		pr_info("%s: sn is not good %s\n", __func__, sn);
+	}
+
+}
+
 static void w1_ds28el15_update_slave_info(struct w1_slave *sl)
 {
 	u8 rdbuf[32];
@@ -1852,22 +2009,27 @@ static void w1_ds28el15_update_slave_info(struct w1_slave *sl)
 	}
 
 	if ((rdbuf[0] < ID_MIN) || (rdbuf[0] > ID_MAX))
-		id = 1;
+		id = ID_DEFAULT;
 	else
 		id = rdbuf[0];
 
 	if ((rdbuf[0] < CO_MIN) || (rdbuf[0] > CO_MAX))
-		color = 1;
+		color = CO_DEFAULT;
 	else
 		color = rdbuf[1];
 
 	pr_info("%s Read ID(%d) & Color(%d) & Verification State(%d)\n",
-		__func__, id, color, sl->verified);
+		__func__, id, color, verification);
+
+	w1_ds28el15_slave_sn(&rdbuf[0]);
 }
 
 static int w1_ds28el15_add_slave(struct w1_slave *sl)
 {
 	int err = 0;
+#ifdef CONFIG_W1_CF
+	u8 rdbuf[32];
+#endif	/* CONFIG_W1_CF */
 
 	printk(KERN_ERR "\nw1_ds28el15_add_slave start\n");
 
@@ -1885,6 +2047,15 @@ static int w1_ds28el15_add_slave(struct w1_slave *sl)
 		printk(KERN_ERR "%s: w1_verifymac_attr error\n", __func__);
 		return err;
 	}
+
+#ifdef CONFIG_W1_CF
+	err = device_create_file(&sl->dev, &w1_cf_attr);
+	if (err) {
+		device_remove_file(&sl->dev, &w1_cf_attr);
+		printk(KERN_ERR "%s: w1_cf_attr error\n", __func__);
+		return err;
+	}
+#endif	/* CONFIG_W1_CF */
 
 	err = device_create_file(&sl->dev, &w1_check_id_attr);
 	if (err) {
@@ -1909,14 +2080,14 @@ static int w1_ds28el15_add_slave(struct w1_slave *sl)
 			pr_info("%s w1_ds28el15_setup_device returned: %d\n", __func__, err);
 			skip_setup = 1;
 			err = w1_ds28el15_verifymac(sl);
-			sl->verified = err;
+			verification = err;
 			if (err) {
 				pr_info("%s verifymac failed\n", __func__);
 				return err;
 			}
 		} else {
 			err = w1_ds28el15_verifymac(sl);
-			sl->verified = err;
+			verification = err;
 			pr_info("w1_ds28el15_verifymac\n");
 			if (err) {
 				pr_info("%s verifymac failed\n", __func__);
@@ -1925,8 +2096,21 @@ static int w1_ds28el15_add_slave(struct w1_slave *sl)
 		}
 	}
 
-	if (!sl->verified)
+	if (!verification) {
+#ifdef CONFIG_W1_CF
+		if (w1_ds28el15_read_memory_check(sl, 0, 0, rdbuf, 32))
+			cf_node = 1;
+		else
+			cf_node = 0;
+
+		pr_info("%s: COVER CLASS(%d)\n", __func__, cf_node);
+#endif	/* CONFIG_W1_CF */
+
+		pr_info("%s: uevent send 1\n", __func__);
+		input_report_switch(sl->master->bus_master->input, SW_W1, 1);
+		input_sync(sl->master->bus_master->input);
 		w1_ds28el15_update_slave_info(sl);
+	}
 
 	printk(KERN_ERR "w1_ds28el15_add_slave end, skip_setup=%d, err=%d\n",
 		skip_setup, err);
@@ -1937,9 +2121,13 @@ static void w1_ds28el15_remove_slave(struct w1_slave *sl)
 {
 	device_remove_file(&sl->dev, &w1_read_user_eeprom_attr);
 	device_remove_file(&sl->dev, &w1_verifymac_attr);
+#ifdef CONFIG_W1_CF
+	device_remove_file(&sl->dev, &w1_cf_attr);
+#endif	/* CONFIG_W1_CF */
 	device_remove_file(&sl->dev, &w1_check_id_attr);
 	device_remove_file(&sl->dev, &w1_check_color_attr);
 
+	verification = -1;
 	printk(KERN_ERR "\nw1_ds28el15_remove_slave\n");
 }
 
@@ -1963,7 +2151,7 @@ static void __exit w1_ds28el15_exit(void)
 	w1_unregister_family(&w1_ds28el15_family);
 }
 
-module_init(w1_ds28el15_init);
+late_initcall(w1_ds28el15_init);
 module_exit(w1_ds28el15_exit);
 
 MODULE_LICENSE("GPL");

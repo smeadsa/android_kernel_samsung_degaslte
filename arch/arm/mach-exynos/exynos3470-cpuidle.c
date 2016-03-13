@@ -678,9 +678,12 @@ static int exynos_enter_lowpower(struct cpuidle_device *dev,
 #else
 		return exynos_enter_idle(dev, drv, 0);
 #endif
-	if (exynos_check_enter_mode() == EXYNOS_CHECK_DIDLE)
-		return exynos_enter_core0_aftr(dev, drv, new_index);
-	else
+	if (exynos_check_enter_mode() == EXYNOS_CHECK_DIDLE) {
+		if ((enable_mask & ENABLE_C3) && !(__raw_readl(EXYNOS4_ISP_STATUS) & 0x7))
+			return exynos_enter_core0_aftr(dev, drv, new_index);
+		else
+			return exynos_enter_idle(dev, drv, 0);
+	} else
 		return exynos_enter_core0_lpa(dev, drv, new_index);
 }
 

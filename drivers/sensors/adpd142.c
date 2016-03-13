@@ -33,16 +33,16 @@ static int dbg_enable;
 module_param(dbg_enable, int, S_IRUGO | S_IWUSR);
 
 /* ADPD142 driver version*/
-#define ADPD142_VERSION			"1.1"
+#define ADPD142_VERSION			"1.2"
 /* ADPD142 release date*/
-#define ADPD142_RELEASE_DATE		"Tue Apr  1 14:15:15 IST 2014"
+#define ADPD142_RELEASE_DATE		"Tue Apr 22 12:11:42 IST 2014"
 
 
 #define ADPD_DEV_NAME			"adpd142"
 
 /*INPUT DEVICE NAME LIST*/
 #define MODULE_NAME_HRM			"hrm_sensor"
-#define CHIP_NAME				"ADPD142"
+#define CHIP_NAME				"ADPD142RI"
 #define VENDOR				"ADI"
 
 #define MAX_EOL_RESULT			132
@@ -161,6 +161,9 @@ OPERATING MODE ==>      MAIN_mode[20:16] |
 
 
 #define MAX_LIB_VER		20
+#define OSC_TRIM_ADDR26_REG		0x26
+#define OSC_TRIM_ADDR28_REG		0x28
+#define OSC_TRIM_ADDR29_REG		0x29
 #define OSC_TRIM_32K_REG		0x4B
 #define OSC_TRIM_32M_REG		0x4D
 #define OSC_DEFAULT_32K_SET		0x2695
@@ -216,7 +219,7 @@ struct wrk_q_timestamp {
 struct adpd142_stats {
 	atomic_t interrupts;
 	atomic_t fifo_requires_sync;
-	atomic_t fifo_bytes[3];
+	atomic_t fifo_bytes[4];
 	atomic_t wq_pending;
 	atomic_t wq_schedule_time_peak_usec;
 	atomic_t wq_schedule_time_last_usec;
@@ -262,6 +265,7 @@ struct adpd142_data {
 	int (*read)(struct adpd142_data *, u8 reg_addr, int len, u16 *buf);
 	int (*write)(struct adpd142_data *, u8 reg_addr, int len, u16 data);
 
+	void (*adpd142_power_vled)(bool);
 
 	u8 eol_test_is_enable;
 	u8 eol_test_status;
@@ -271,6 +275,9 @@ struct adpd142_data {
 
 	int osc_trim_32K_value;
 	int osc_trim_32M_value;
+	int osc_trim_addr26_value;
+	int osc_trim_addr28_value;
+	int osc_trim_addr29_value;
 	u8 osc_trim_open_enable;
 };
 
@@ -1067,9 +1074,9 @@ adpd142_configuration(struct adpd142_data *pst_adpd, unsigned char config)
 static int osc_trim_efs_register_open(struct adpd142_data *pst_adpd)
 {
 	struct file *osc_filp = NULL;
-	char buffer[20] = {0, };
+	char buffer[60] = {0, };
 	int err = 0;
-	int osc_trim_32k, osc_trim_32m;
+	int osc_trim_32k, osc_trim_32m, osc_trim_addr26, osc_trim_addr28, osc_trim_addr29;
 	mm_segment_t old_fs;
 
 	old_fs = get_fs();
@@ -1086,16 +1093,22 @@ static int osc_trim_efs_register_open(struct adpd142_data *pst_adpd)
 
 	err = osc_filp->f_op->read(osc_filp,
 		(char *)buffer,
-		20 * sizeof(char), &osc_filp->f_pos);
-	if (err != (20 * sizeof(char))) {
+		60 * sizeof(char), &osc_filp->f_pos);
+	if (err != (60 * sizeof(char))) {
 		pr_err("adpd142_%s: Can't read the oscillator trim data from file\n", __func__);
 		err = -EIO;
 	}
-	sscanf(buffer, "%d,%d", &osc_trim_32k, &osc_trim_32m);
-	pr_info("adpd142_%s = (%d,%d)\n", __func__, osc_trim_32k, osc_trim_32m);
+	sscanf(buffer, "%d,%d,%d,%d,%d",
+		&osc_trim_32k, &osc_trim_32m, &osc_trim_addr26, &osc_trim_addr28, &osc_trim_addr29);
+	pr_info("adpd142_%s = (%d,%d,%d,%d,%d)\n",
+		__func__, osc_trim_32k, osc_trim_32m, osc_trim_addr26, osc_trim_addr28, osc_trim_addr29);
 
 	pst_adpd->osc_trim_32K_value = osc_trim_32k;
 	pst_adpd->osc_trim_32M_value = osc_trim_32m;
+	pst_adpd->osc_trim_addr26_value = osc_trim_addr26;
+	pst_adpd->osc_trim_addr28_value = osc_trim_addr28;
+	pst_adpd->osc_trim_addr29_value = osc_trim_addr29;
+
 	filp_close(osc_filp, current->files);
 	set_fs(old_fs);
 
@@ -1106,8 +1119,8 @@ static int osc_trim_efs_register_save(struct adpd142_data *pst_adpd)
 {
 	struct file *osc_filp = NULL;
 	mm_segment_t old_fs;
-	char buffer[20] = {0, };
-	int osc_trim_32k, osc_trim_32m;
+	char buffer[60] = {0, };
+	int osc_trim_32k, osc_trim_32m, osc_trim_addr26, osc_trim_addr28, osc_trim_addr29;
 	int err = 0;
 
 	old_fs = get_fs();
@@ -1124,19 +1137,27 @@ static int osc_trim_efs_register_save(struct adpd142_data *pst_adpd)
 
 	osc_trim_32k = reg_read(pst_adpd, OSC_TRIM_32K_REG);
 	osc_trim_32m = reg_read(pst_adpd, OSC_TRIM_32M_REG);
+	osc_trim_addr26 = reg_read(pst_adpd, OSC_TRIM_ADDR26_REG);
+	osc_trim_addr28 = reg_read(pst_adpd, OSC_TRIM_ADDR28_REG);
+	osc_trim_addr29 = reg_read(pst_adpd, OSC_TRIM_ADDR29_REG);
 
-	sprintf(buffer, "%d,%d", osc_trim_32k, osc_trim_32m);
-	pr_info("adpd142_%s = (%d,%d)\n", __func__, osc_trim_32k, osc_trim_32m);
+	sprintf(buffer, "%d,%d,%d,%d,%d",
+		osc_trim_32k, osc_trim_32m, osc_trim_addr26, osc_trim_addr28, osc_trim_addr29);
+	pr_info("adpd142_%s = (%d,%d,%d,%d,%d)\n",
+		__func__, osc_trim_32k, osc_trim_32m, osc_trim_addr26, osc_trim_addr28, osc_trim_addr29);
 
 	err = osc_filp->f_op->write(osc_filp,
 		(char *)&buffer,
-		20 * sizeof(char), &osc_filp->f_pos);
-	if (err != (20 * sizeof(char))) {
+		60 * sizeof(char), &osc_filp->f_pos);
+	if (err != (60 * sizeof(char))) {
 		pr_err("adpd142_%s: Can't write the oscillator trim data to file\n", __func__);
 		err = -EIO;
 	}
 	pst_adpd->osc_trim_32K_value = osc_trim_32k;
 	pst_adpd->osc_trim_32M_value = osc_trim_32m;
+	pst_adpd->osc_trim_addr26_value = osc_trim_addr26;
+	pst_adpd->osc_trim_addr28_value = osc_trim_addr28;
+	pst_adpd->osc_trim_addr29_value = osc_trim_addr29;
 
 	filp_close(osc_filp, current->files);
 	set_fs(old_fs);
@@ -1201,6 +1222,7 @@ sample_attr_set_enable(struct device *dev, struct device_attribute *attr,
 	unsigned short parse_data[2];
 	unsigned short mode = 0;
         unsigned short osc_trim_32k, osc_trim_32m;
+	unsigned short osc_trim_addr26 = 0, osc_trim_addr28 = 0, osc_trim_addr29 = 0;
 	int err;
 
 	int val;
@@ -1211,25 +1233,49 @@ sample_attr_set_enable(struct device *dev, struct device_attribute *attr,
 	if (pst_adpd->osc_trim_open_enable == 1) {
 		err = osc_trim_efs_register_open(pst_adpd);
 		if (err < 0) {
-			pr_err("adpd142_%s: osc_trim_efs_register_open() failed(%d)\n", __func__, err);
+			pr_err("adpd142_%s: osc_trim_efs_register_open() empty(%d)\n", __func__, err);
 			osc_trim_32k = OSC_DEFAULT_32K_SET;
 			osc_trim_32m = OSC_DEFAULT_32M_SET;
 		} else {
 			osc_trim_32k = (unsigned short)pst_adpd->osc_trim_32K_value;
 			osc_trim_32m = (unsigned short)pst_adpd->osc_trim_32M_value;
+			osc_trim_addr26 = (unsigned short)pst_adpd->osc_trim_addr26_value;
+			osc_trim_addr28 = (unsigned short)pst_adpd->osc_trim_addr28_value;
+			osc_trim_addr29 = (unsigned short)pst_adpd->osc_trim_addr29_value;
+
+			reg_write(pst_adpd, OSC_TRIM_ADDR26_REG, osc_trim_addr26);
+			reg_write(pst_adpd, OSC_TRIM_ADDR28_REG, osc_trim_addr28);
+			reg_write(pst_adpd, OSC_TRIM_ADDR29_REG, osc_trim_addr29);
 		}
-		pr_info("adpd142_%s = 32K[%02x], 32M[%02x]\n", __func__, osc_trim_32k, osc_trim_32m);
+		pr_info("adpd142_%s = 32K[%02x], 32M[%02x], addr26[%02x], addr28[%02x], addr29[%02x]\n",
+			__func__, osc_trim_32k, osc_trim_32m, osc_trim_addr26, osc_trim_addr28, osc_trim_addr29);
 		reg_write(pst_adpd, OSC_TRIM_32K_REG, osc_trim_32k);
 		reg_write(pst_adpd, OSC_TRIM_32M_REG, osc_trim_32m);
 		pst_adpd->osc_trim_open_enable = 0;
 	}
 
 	if (val == 1) {
+		pr_info("adpd142_%s_enable.\n", __func__);
 		cmd_parsing("0x31", 1, parse_data);
 		atomic_set(&pst_adpd->sample_enabled, 1);
+
+		if (pst_adpd->adpd142_power_vled) {
+			pr_info("adpd142_%s_vled_power_on.\n", __func__);
+			pst_adpd->adpd142_power_vled(true);
+		}else {
+			pr_info("adpd142_%s_vled_power_on_disable.\n", __func__);
+		}
 	} else {
+		pr_info("adpd142_%s_disable.\n", __func__);
 		cmd_parsing("0x0", 1, parse_data);
 		atomic_set(&pst_adpd->sample_enabled, 0);
+
+		if (pst_adpd->adpd142_power_vled) {
+			pr_info("adpd142_%s_vled_power_off.\n", __func__);
+			pst_adpd->adpd142_power_vled(false);
+		} else {
+			pr_info("adpd142_%s_vled_power_off_disable.\n", __func__);
+		}
 	}
 	mode = GET_USR_MODE(parse_data[0]);
 
@@ -1950,9 +1996,6 @@ static ssize_t adpd142_vendor_show(struct device *dev,
 	return snprintf(buf, PAGE_SIZE, "%s\n", VENDOR);
 }
 
-static ssize_t eol_test_result_store(struct device *dev,
-	struct device_attribute *attr, const char *buf, size_t size);
-
 static ssize_t eol_test_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t size)
 {
@@ -1978,7 +2021,6 @@ static ssize_t eol_test_show(struct device *dev,
 {
 	struct adpd142_data *pst_adpd = dev_get_drvdata(dev);
 
-        pr_info("adpd142_%s = %u \n", __func__, pst_adpd->eol_test_is_enable);
 	return snprintf(buf, PAGE_SIZE, "%u\n", pst_adpd->eol_test_is_enable);
 }
 
@@ -2007,7 +2049,7 @@ static ssize_t eol_test_result_store(struct device *dev,
 
 	err = osc_trim_efs_register_save(pst_adpd);
 	if (err < 0) {
-		pr_err("adpd142_%s: osc_trim_efs_register_save() failed(%d)\n", __func__, err);
+		pr_err("adpd142_%s: osc_trim_efs_register_save() empty(%d)\n", __func__, err);
 	}
 
 	return size;
@@ -2155,18 +2197,21 @@ static s32
 adpd_i2c_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	struct adpd142_data *pst_adpd = NULL;
-	int err = 0;
+	struct adpd_platform_data *ptr_config;
+	int ret = 0;
 	unsigned short u16_regval = 0;
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
 		dev_err(&client->dev, "client not i2c capable\n");
-		err = -ENODEV;
+		ret = -ENODEV;
+		pr_err("[SENSOR] %s - exit_check_functionality.\n", __func__);
 		goto exit_check_functionality_failed;
 	}
 
 	pst_adpd = kzalloc(sizeof(struct adpd142_data), GFP_KERNEL);
 	if (pst_adpd == NULL) {
-		err = -ENOMEM;
+		ret = -ENOMEM;
+		pr_err("[SENSOR] %s - exit_mem_allocate.\n", __func__);
 		goto exit_mem_allocate_failed;
 	}
 
@@ -2177,6 +2222,11 @@ adpd_i2c_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	pst_adpd->write = adpd142_i2c_write;
 	/*Need to allocate and assign data then use the below function */
 	i2c_set_clientdata(client, (struct adpd142_data *)pst_adpd);
+
+	ptr_config = pst_adpd->client->dev.platform_data;
+	if(ptr_config->adpd142_power != NULL)
+		pst_adpd->adpd142_power_vled = ptr_config->adpd142_power;
+
 	/*chip ID verification */
 	u16_regval = reg_read(pst_adpd, ADPD_CHIPID_ADDR);
 
@@ -2184,15 +2234,16 @@ adpd_i2c_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	case ADPD_CHIPID(0):
 	case ADPD_CHIPID(1):
 	case ADPD_CHIPID(2):
-		err = 0;
+		ret = 0;
 		ADPD142_dbg("chipID value = 0x%x\n", u16_regval);
 	break;
 	default:
-		err = 1;
+		ret = 1;
 	break;
 	};
-	if (err) {
+	if (ret) {
 		ADPD142_dbg("chipID value = 0x%x\n", u16_regval);
+		pr_err("[SENSOR] %s - exit_chipid_verification.\n", __func__);
 		goto exit_chipid_verification;
 	}
 	ADPD142_info("chipID value = 0x%x\n", u16_regval);
@@ -2202,42 +2253,47 @@ adpd_i2c_probe(struct i2c_client *client, const struct i2c_device_id *id)
 
 
 	if (adpd142_initialization(pst_adpd, id)){
+		pr_err("[SENSOR] %s - exit_adpd142_init_exit.\n", __func__);
 		goto exit_adpd142_init;
 	}
 
 	/* set sysfs for hrm sensor */
-	err = sensors_register(pst_adpd->dev, pst_adpd, hrm_sensor_attrs,
+	ret = sensors_register(pst_adpd->dev, pst_adpd, hrm_sensor_attrs,
 		"hrm_sensor");
-	if (err) {
+	if (ret) {
 		pr_err("[SENSOR] %s - cound not register hrm_sensor(%d).\n",
-			__func__, err);
-		goto hrm_sensor_register_failed;
+			__func__, ret);
+		goto exit_hrm_sensor_register_failed;
 	}
 
 #if defined(CONFIG_SENSOR_USE_SYMLINK)
-	err =  sensors_initialize_symlink(pst_adpd->ptr_sample_inputdev);
-	if (err < 0) {
+	ret =  sensors_initialize_symlink(pst_adpd->ptr_sample_inputdev);
+	if (ret < 0) {
+                sensors_delete_symlink(pst_adpd->ptr_sample_inputdev);
 		pr_err("[SENSOR] %s - sensors_initialize_symlink error(%d).\n",
-                        __func__, err);
-		goto hrm_sensor_register_failed;
+                        __func__, ret);
+		goto exit_symlink_create_failed;
 	}
 #endif
 	pr_info("%s success\n", __func__);
 
 	goto done;
+
+#if defined(CONFIG_SENSOR_USE_SYMLINK)
+exit_symlink_create_failed:
+	sensors_unregisters(pst_adpd->dev, hrm_sensor_attrs);
+#endif
+exit_hrm_sensor_register_failed:
+	mutex_destroy(&pst_adpd->mutex);
 exit_adpd142_init:
 exit_chipid_verification:
-	mutex_destroy(&pst_adpd->mutex);
-exit_mem_allocate_failed:
 	kfree(pst_adpd);
+exit_mem_allocate_failed:
 exit_check_functionality_failed:
-	dev_err(&client->dev, "%s: Driver Init failed\n", ADPD_DEV_NAME);
+	dev_err(&client->dev, "%s: Driver Init exit\n", ADPD_DEV_NAME);
 	pr_err("%s failed\n", __func__);
-hrm_sensor_register_failed:
-	gpio_free(pst_adpd->hrm_int);
-
 done:
-	return err;
+	return ret;
 }
 
 /**
@@ -2251,13 +2307,13 @@ adpd_i2c_remove(struct i2c_client *client)
 	struct adpd142_data *pst_adpd = i2c_get_clientdata(client);
 	ADPD142_dbg("%s\n", __func__);
 	adpd142_initialization_cleanup(pst_adpd);
+	gpio_free(pst_adpd->hrm_int);
 	kfree(pst_adpd->ptr_config);
 	kfree(pst_adpd);
 	pst_adpd = NULL;
 
 	i2c_set_clientdata(client, NULL);
 
-	gpio_free(pst_adpd->hrm_int);
 	return 0;
 }
 

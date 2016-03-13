@@ -146,10 +146,14 @@ int sensor_2p2_probe(struct i2c_client *client,
 	ext->actuator_con.peri_setting.i2c.slave_address = 0x5A;
 	ext->actuator_con.peri_setting.i2c.speed = 400000;
 
-#if defined(CONFIG_SOC_EXYNOS5422)
+#ifdef CONFIG_LEDS_MAX77804
 	ext->flash_con.product_name = FLADRV_NAME_MAX77693;
-#else
+#endif
+#ifdef CONFIG_LEDS_LM3560
 	ext->flash_con.product_name = FLADRV_NAME_LM3560;
+#endif
+#ifdef CONFIG_LEDS_SKY81296
+	ext->flash_con.product_name = FLADRV_NAME_SKY81296;
 #endif
 	ext->flash_con.peri_type = SE_GPIO;
 	ext->flash_con.peri_setting.gpio.first_gpio_port_no = 1;
@@ -157,14 +161,11 @@ int sensor_2p2_probe(struct i2c_client *client,
 
 	ext->from_con.product_name = FROMDRV_NAME_NOTHING;
 
+#ifdef CONFIG_COMPANION_USE
 	ext->companion_con.product_name = COMPANION_NAME_73C1;
 	ext->companion_con.peri_info0.valid = true;
 	ext->companion_con.peri_info0.peri_type = SE_SPI;
-#if defined(CONFIG_SOC_EXYNOS5422)
-	ext->companion_con.peri_info0.peri_setting.spi.channel = 0;
-#else
-	ext->companion_con.peri_info0.peri_setting.spi.channel = 1;
-#endif
+	ext->companion_con.peri_info0.peri_setting.spi.channel = (int) core->companion_spi_channel;
 	ext->companion_con.peri_info1.valid = true;
 	ext->companion_con.peri_info1.peri_type = SE_I2C;
 	ext->companion_con.peri_info1.peri_setting.i2c.channel = 0;
@@ -173,12 +174,15 @@ int sensor_2p2_probe(struct i2c_client *client,
 	ext->companion_con.peri_info2.valid = true;
 	ext->companion_con.peri_info2.peri_type = SE_FIMC_LITE;
 	ext->companion_con.peri_info2.peri_setting.fimc_lite.channel = FLITE_ID_D;
-
-#ifdef DEFAULT_S5K2P2_DRIVING
-	v4l2_i2c_subdev_init(subdev_module, client, &subdev_ops);
 #else
-	v4l2_subdev_init(subdev_module, &subdev_ops);
+	ext->companion_con.product_name = COMPANION_NAME_NOTHING;
 #endif
+
+	if (client)
+		v4l2_i2c_subdev_init(subdev_module, client, &subdev_ops);
+	else
+		v4l2_subdev_init(subdev_module, &subdev_ops);
+
 	v4l2_set_subdevdata(subdev_module, module);
 	v4l2_set_subdev_hostdata(subdev_module, device);
 	snprintf(subdev_module->name, V4L2_SUBDEV_NAME_SIZE, "sensor-subdev.%d", module->id);

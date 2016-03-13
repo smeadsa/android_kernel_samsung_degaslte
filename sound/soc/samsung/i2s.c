@@ -216,7 +216,9 @@ static inline bool is_manager(struct i2s_dai *i2s)
 
 static inline struct clk *get_opclk(struct i2s_dai *i2s, int clk_id)
 {
-	struct s3c_audio_pdata *i2s_pdata = i2s->pdev->dev.platform_data;
+	struct platform_device *pri_pdev = i2s->pri_dai ?
+					i2s->pri_dai->pdev : i2s->pdev;
+	struct s3c_audio_pdata *i2s_pdata = pri_pdev->dev.platform_data;
 	const char *src_clk_name = i2s_pdata->type.i2s.src_clk[clk_id];
 
 	if ((i2s->pdev->id == 0) || (i2s->pdev->id == SAMSUNG_I2S_SECOFF))
@@ -619,15 +621,26 @@ static int i2s_hw_params(struct snd_pcm_substream *substream,
 	struct i2s_dai *i2s = to_info(dai);
 	u32 mod = readl(i2s->addr + I2SMOD);
 
-	if (!is_secondary(i2s))
+	if (!is_secondary(i2s) &&
+		(substream->stream == SNDRV_PCM_STREAM_PLAYBACK))
 		mod &= ~(MOD_DC2_EN | MOD_DC1_EN);
 
 	switch (params_channels(params)) {
 	case 6:
-		mod |= MOD_DC1_EN | MOD_DC2_EN;
+		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+			i2s->dma_playback.dma_size = 4;
+			mod |= MOD_DC2_EN | MOD_DC1_EN;
+		} else {
+			i2s->dma_capture.dma_size = 4;
+		}
 		break;
 	case 4:
-		mod |= MOD_DC1_EN;
+		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+			i2s->dma_playback.dma_size = 4;
+			mod |= MOD_DC1_EN;
+		} else {
+			i2s->dma_capture.dma_size = 4;
+		}
 		break;
 	case 2:
 		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)

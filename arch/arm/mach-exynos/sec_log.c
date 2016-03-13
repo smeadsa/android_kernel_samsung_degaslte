@@ -563,6 +563,74 @@ late_initcall(sec_log_late_init);
 #endif
 
 #ifdef CONFIG_SEC_DEBUG_TIMA_LOG
+
+#ifdef   CONFIG_TIMA_RKP
+#define   TIMA_DEBUG_LOG_START  0x90300000
+#define   TIMA_DEBUG_LOG_SIZE   1<<20
+
+#define   TIMA_SEC_LOG          0x8d800000
+#define   TIMA_SEC_LOG_SIZE     1<<20 
+
+#define   TIMA_PHYS_MAP         0x8d900000
+#define   TIMA_PHYS_MAP_SIZE    6<<20 
+
+#define   TIMA_SEC_TO_PGT       0x8e000000
+#define   TIMA_SEC_TO_PGT_SIZE  2<<20 
+
+
+#define   TIMA_DASHBOARD_START  0x8d700000
+#define   TIMA_DASHBOARD_SIZE    0x4000
+
+static int  tima_setup_rkp_mem(void){
+	if(reserve_bootmem(TIMA_DEBUG_LOG_START, TIMA_DEBUG_LOG_SIZE, BOOTMEM_EXCLUSIVE)){
+		pr_err("%s: RKP failed reserving size %d " \
+			   "at base 0x%x\n", __func__, TIMA_DEBUG_LOG_SIZE, TIMA_DEBUG_LOG_START);
+		goto out;
+	}
+	pr_info("RKP :%s, base:%x, size:%x \n", __func__,TIMA_DEBUG_LOG_START, TIMA_DEBUG_LOG_SIZE);
+
+ 		   
+	if(reserve_bootmem(TIMA_SEC_TO_PGT, TIMA_SEC_TO_PGT_SIZE, BOOTMEM_EXCLUSIVE)){
+		pr_err("%s: RKP failed reserving size %d " \
+			   "at base 0x%x\n", __func__, TIMA_SEC_TO_PGT_SIZE, TIMA_SEC_TO_PGT);
+		goto out;
+	}
+	pr_info("RKP :%s, base:%x, size:%x \n", __func__,TIMA_SEC_TO_PGT, TIMA_SEC_TO_PGT_SIZE);
+ 
+
+	if(reserve_bootmem(TIMA_SEC_LOG, TIMA_SEC_LOG_SIZE, BOOTMEM_EXCLUSIVE)){
+		pr_err("%s: RKP failed reserving size %d " \
+			   "at base 0x%x\n", __func__, TIMA_SEC_LOG_SIZE, TIMA_SEC_LOG);
+		goto out;
+	}
+	pr_info("RKP :%s, base:%x, size:%x \n", __func__,TIMA_SEC_LOG, TIMA_SEC_LOG_SIZE);
+
+	if(reserve_bootmem(TIMA_PHYS_MAP,  TIMA_PHYS_MAP_SIZE, BOOTMEM_EXCLUSIVE)){
+		pr_err("%s: RKP failed reserving size %d "					\
+			   "at base 0x%x\n", __func__, TIMA_PHYS_MAP_SIZE, TIMA_PHYS_MAP);
+		goto out;
+	}
+	pr_info("RKP :%s, base:%x, size:%x \n", __func__,TIMA_PHYS_MAP, TIMA_PHYS_MAP_SIZE);
+
+	if(reserve_bootmem(TIMA_DASHBOARD_START,  TIMA_DASHBOARD_SIZE, BOOTMEM_EXCLUSIVE)){
+		pr_err("%s: RKP failed reserving size %d "					\
+			   "at base 0x%x\n", __func__, TIMA_DASHBOARD_SIZE, TIMA_DASHBOARD_START);
+		goto out;
+	}
+	pr_info("RKP :%s, base:%x, size:%x \n", __func__,TIMA_DASHBOARD_START, TIMA_DASHBOARD_SIZE);
+
+	
+	return 1; 
+ out: 
+	return 0; 
+
+}
+#else /* !CONFIG_TIMA_RKP*/
+static int tima_setup_rkp_mem(void){
+	return 1;
+}
+#endif
+
 static int __init sec_tima_log_setup(char *str)
 {
 	unsigned size = memparse(str, &str);
@@ -578,6 +646,8 @@ static int __init sec_tima_log_setup(char *str)
 			goto out;
 	}
 	pr_info("tima :%s, base:%lx, size:%x \n", __func__,base, size);
+	if( !tima_setup_rkp_mem())
+		goto out;
 
 	return 1;
 out:

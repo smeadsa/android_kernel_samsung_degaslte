@@ -150,14 +150,7 @@ static int cyttsp5_i2c_remove(struct i2c_client *client)
 static void cyttsp5_i2c_shutdown(struct i2c_client *client)
 {
 	struct device *dev = &client->dev;
-	const struct of_device_id *match;
-	struct cyttsp5_core_data *cd = i2c_get_clientdata(client);
-
-	cyttsp5_release(cd);
-
-	match = of_match_device(of_match_ptr(cyttsp5_i2c_of_match), dev);
-	if (match)
-		cyttsp5_devtree_clean_pdata(dev);
+	cyttsp5_core_suspend(dev);
 }
 
 static const struct i2c_device_id cyttsp5_i2c_id[] = {

@@ -1,3 +1,14 @@
+/*
+ * Samsung Exynos5 SoC series FIMC-IS driver
+ *
+ *
+ * Copyright (c) 2014 Samsung Electronics Co., Ltd
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+
 #include <linux/module.h>
 #include <linux/delay.h>
 #include <linux/kernel.h>
@@ -206,6 +217,10 @@ int csi_hw_s_control(unsigned long __iomem *base_reg,
 	val |= (0xF << 8);
 
 	switch (pixelformat) {
+	case V4L2_PIX_FMT_SBGGR8:
+	case V4L2_PIX_FMT_SGBRG8:
+	case V4L2_PIX_FMT_SGRBG8:
+	case V4L2_PIX_FMT_SRGGB8:
 	case V4L2_PIX_FMT_SBGGR10:
 	case V4L2_PIX_FMT_SGBRG10:
 	case V4L2_PIX_FMT_SGRBG10:
@@ -222,10 +237,6 @@ int csi_hw_s_control(unsigned long __iomem *base_reg,
 	case V4L2_PIX_FMT_YVU420:
 	case V4L2_PIX_FMT_NV21:
 	case V4L2_PIX_FMT_YUYV:
-	case V4L2_PIX_FMT_SBGGR8:
-	case V4L2_PIX_FMT_SGBRG8:
-	case V4L2_PIX_FMT_SGRBG8:
-	case V4L2_PIX_FMT_SRGGB8:
 		/* output width of CH0 is 32 bits(32bit align) */
 		val |= (1 << 20);
 		break;
@@ -437,7 +448,7 @@ void s5pcsis_system_enable(unsigned long __iomem *base_reg, int on)
 
 	val = readl(base_reg + TO_WORD_OFFSET(S5PCSIS_CTRL));
 
-#if defined(CONFIG_SOC_EXYNOS5430) || defined(CONFIG_SOC_EXYNOS5422)
+#if defined(CONFIG_SOC_EXYNOS5430) || defined(CONFIG_SOC_EXYNOS5433) || defined(CONFIG_SOC_EXYNOS5422)
 	val |= S5PCSIS_CTRL_WCLK_EXTCLK;
 #endif
 
@@ -482,7 +493,7 @@ static void __s5pcsis_set_format(unsigned long __iomem *base_reg,
 	else
 		val = (val & ~S5PCSIS_CFG_FMT_MASK) | S5PCSIS_CFG_FMT_RAW10;
 
-#if defined(CONFIG_SOC_EXYNOS5430) || defined(CONFIG_SOC_EXYNOS5422)
+#if defined(CONFIG_SOC_EXYNOS5430) || defined(CONFIG_SOC_EXYNOS5433) || defined(CONFIG_SOC_EXYNOS5422)
 	val |= S5PCSIS_CFG_END_INTERVAL(1);
 #endif
 	writel(val, base_reg + TO_WORD_OFFSET(S5PCSIS_CONFIG));

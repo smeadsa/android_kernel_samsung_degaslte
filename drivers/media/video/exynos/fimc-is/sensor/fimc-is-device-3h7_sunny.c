@@ -41,8 +41,8 @@
 #define SENSOR_NAME "S5K3H7_SUNNY"
 
 static struct fimc_is_sensor_cfg config_3h7_sunny[] = {
-	/* 3280x2458@30fps */
-	FIMC_IS_SENSOR_CFG(3280, 2458, 30, 15, 0),
+	/* 3264x2448@30fps */
+	FIMC_IS_SENSOR_CFG(3264, 2448, 30, 15, 0),
 };
 
 static int sensor_3h7_sunny_init(struct v4l2_subdev *subdev, u32 val)
@@ -147,11 +147,11 @@ int sensor_3h7_sunny_probe(struct i2c_client *client,
 
 	ext->companion_con.product_name = COMPANION_NAME_NOTHING;
 
-#ifdef DEFAULT_S5K3H7_SUNNY_DRIVING
-	v4l2_i2c_subdev_init(subdev_module, client, &subdev_ops);
-#else
-	v4l2_subdev_init(subdev_module, &subdev_ops);
-#endif
+	if (client)
+		v4l2_i2c_subdev_init(subdev_module, client, &subdev_ops);
+	else
+		v4l2_subdev_init(subdev_module, &subdev_ops);
+
 	v4l2_set_subdevdata(subdev_module, module);
 	v4l2_set_subdev_hostdata(subdev_module, device);
 	snprintf(subdev_module->name, V4L2_SUBDEV_NAME_SIZE, "sensor-subdev.%d", module->id);

@@ -84,7 +84,6 @@ struct cyttsp5_loader_data {
 #if !defined(UPGRADE_FW_IN_PROBE)
 	struct work_struct fw_and_config_upgrade;
 #endif
-	struct work_struct calibration_work;
 	struct cyttsp5_loader_platform_data *loader_pdata;
 #ifdef CONFIG_TOUCHSCREEN_CYPRESS_CYTTSP5_MANUAL_TTCONFIG_UPGRADE
 	struct mutex config_lock;
@@ -188,7 +187,6 @@ static int cyttsp5_ldr_enter_(struct device *dev, struct cyttsp5_dev_id *dev_id)
 	dev_id->bl_ver = 0;
 
 	cmd->request_reset(dev);
-	msleep(CY_LDR_SWITCH_TO_APP_MODE_TIMEOUT);
 
 	rc = cmd->request_get_mode(dev, 0, &mode);
 	if (rc < 0)
@@ -197,7 +195,10 @@ static int cyttsp5_ldr_enter_(struct device *dev, struct cyttsp5_dev_id *dev_id)
 	if (mode == CY_MODE_UNKNOWN)
 		return -EINVAL;
 
-	if (mode == CY_MODE_OPERATIONAL) {
+	if (mode == CY_MODE_BOOTLOADER)
+		tsp_debug_info(true, dev, "%s: Bootloader mode\n", __func__);
+	else if (mode == CY_MODE_OPERATIONAL) {
+		tsp_debug_info(true, dev, "%s: Operational mode\n", __func__);
 		rc = cmd->cmd->start_bl(dev, 0);
 		if (rc < 0)
 			return rc;
@@ -325,7 +326,7 @@ static int cyttsp5_load_app_(struct device *dev, const u8 *fw, int fw_size)
 			__func__, rc);
 		goto _cyttsp5_load_app_exit;
 	}
-	dev_vdbg(dev, "%s: dev: silicon id=%08X rev=%02X bl=%08X\n",
+	tsp_debug_info(true, dev, "%s: dev: silicon id=%08X rev=%02X bl=%08X\n",
 		__func__, dev_id->silicon_id,
 		dev_id->rev_id, dev_id->bl_ver);
 
@@ -413,53 +414,6 @@ _cyttsp5_load_app_error:
 	return rc;
 }
 
-static void cyttsp5_fw_calibrate(struct work_struct *calibration_work)
-{
-	struct cyttsp5_loader_data *ld = container_of(calibration_work,
-			struct cyttsp5_loader_data, calibration_work);
-	struct device *dev = ld->dev;
-	u8 mode;
-	int rc;
-
-	rc = cmd->request_exclusive(dev, CY_LDR_REQUEST_EXCLUSIVE_TIMEOUT);
-	if (rc < 0)
-		return;
-
-	rc = cmd->cmd->suspend_scanning(dev, 0);
-	if (rc < 0)
-		goto release;
-
-	for (mode = 0; mode < 3; mode++) {
-		rc = cmd->cmd->calibrate_idacs(dev, 0, mode);
-		if (rc < 0)
-			goto release;
-	}
-
-	rc = cmd->cmd->resume_scanning(dev, 0);
-	if (rc < 0)
-		goto release;
-
-	tsp_debug_dbg(true, dev, "%s: Calibration Done\n", __func__);
-
-release:
-	cmd->release_exclusive(dev);
-}
-
-static int cyttsp5_fw_calibration_attention(struct device *dev)
-{
-	struct cyttsp5_loader_data *ld = cyttsp5_get_loader_data(dev);
-	int rc = 0;
-
-	tsp_debug_dbg(false, dev, "%s: \n", __func__);
-
-	schedule_work(&ld->calibration_work);
-
-	cmd->unsubscribe_attention(dev, CY_ATTEN_STARTUP, CY_MODULE_LOADER,
-		cyttsp5_fw_calibration_attention, 0);
-
-	return rc;
-}
-
 static int cyttsp5_upgrade_firmware(struct device *dev, const u8 *fw_img,
 		int fw_size)
 {
@@ -489,21 +443,6 @@ static int cyttsp5_upgrade_firmware(struct device *dev, const u8 *fw_img,
 	if (rc < 0) {
 		tsp_debug_err(true, dev, "%s: Firmware update failed with error code %d\n",
 			__func__, rc);
-	} else/* if (ld->loader_pdata &&
-			(ld->loader_pdata->flags
-			 & CY_LOADER_FLAG_CALIBRATE_AFTER_FW_UPGRADE)) */{
-		/* set up call back for startup */
-		dev_vdbg(dev, "%s: Adding callback for calibration\n",
-			__func__);
-		rc = cmd->subscribe_attention(dev, CY_ATTEN_STARTUP,
-			CY_MODULE_LOADER, cyttsp5_fw_calibration_attention, 0);
-		if (rc) {
-			tsp_debug_err(true, dev, "%s: Failed adding callback for calibration\n",
-				__func__);
-			tsp_debug_err(true, dev, "%s: No calibration will be performed\n",
-				__func__);
-			rc = 0;
-		}
 	}
 
 	cmd->release_exclusive(dev);
@@ -1317,8 +1256,6 @@ int cyttsp5_loader_probe(struct device *dev)
 #endif
 	cmd->subscribe_attention(dev, CY_ATTEN_IRQ, CY_MODULE_LOADER,
 		cyttsp5_loader_attention, CY_MODE_BOOTLOADER);
-
-	INIT_WORK(&ld->calibration_work, cyttsp5_fw_calibrate);
 #endif
 
 #ifdef CONFIG_TOUCHSCREEN_CYPRESS_CYTTSP5_MANUAL_TTCONFIG_UPGRADE

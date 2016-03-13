@@ -171,6 +171,7 @@ struct mpu6500_selftest {
 	unsigned char accel_config2;
 	unsigned char gyro_config;
 	unsigned char int_enable;
+	unsigned char fifo_enable;
 };
 
 /*
@@ -227,6 +228,11 @@ static int mpu6500_backup_register(struct inv_mpu_state *st)
 	if (result)
 		return result;
 
+	result = inv_i2c_read(st, MPUREG_FIFO_EN,
+				 1, &mpu6500_selftest.fifo_enable);
+	if (result)
+		return result;
+
 	result =
 	    inv_i2c_read(st, MPUREG_INT_ENABLE,
 				 1, &mpu6500_selftest.int_enable);
@@ -279,6 +285,11 @@ static int mpu6500_recover_register(struct inv_mpu_state *st)
 	result =
 	    inv_i2c_single_write(st, MPUREG_SMPLRT_DIV,
 					 mpu6500_selftest.smplrt_div);
+	if (result)
+		return result;
+
+	result = inv_i2c_single_write(st, MPUREG_FIFO_EN,
+					 mpu6500_selftest.fifo_enable);
 	if (result)
 		return result;
 
@@ -713,7 +724,7 @@ static int mpu6500_do_test(struct inv_mpu_state *st, int self_test_flag,
 	if (result)
 		return result;
 	result = inv_i2c_single_write(st, MPUREG_ACCEL_CONFIG2,
-		DEF_ST_MPU6500_ACCEL_LPF | BIT_FIFO_SIZE_1K);
+		DEF_ST_MPU6500_ACCEL_LPF);
 	if (result)
 		return result;
 	result = inv_i2c_single_write(st, MPUREG_SMPLRT_DIV, 0x0);

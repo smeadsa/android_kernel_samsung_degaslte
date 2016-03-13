@@ -59,10 +59,13 @@ enum FIMC_IS_SCENARIO_ID {
 	FIMC_IS_SN_FRONT_VT1,
 	FIMC_IS_SN_FRONT_VT2,
 	FIMC_IS_SN_REAR_PREVIEW_FHD,
+	FIMC_IS_SN_REAR_PREVIEW_FHD_BNS_OFF,
 	FIMC_IS_SN_REAR_PREVIEW_WHD,
 	FIMC_IS_SN_REAR_PREVIEW_UHD,
 	FIMC_IS_SN_REAR_CAPTURE,
+	FIMC_IS_SN_REAR_CAMCORDING_FHD_BNS_OFF,
 	FIMC_IS_SN_REAR_CAMCORDING_FHD,
+	FIMC_IS_SN_REAR_CAMCORDING_WHD,
 	FIMC_IS_SN_REAR_CAMCORDING_UHD,
 	FIMC_IS_SN_DUAL_PREVIEW,
 	FIMC_IS_SN_DUAL_CAPTURE,
@@ -217,7 +220,6 @@ struct exynos_platform_fimc_is {
 	bool	use_two_spi_line;
 #endif
 #ifdef CONFIG_USE_VENDER_FEATURE
-	u32	use_vision;
 	u32	use_sensor_dynamic_voltage_mode;
 #endif
 };
@@ -238,6 +240,12 @@ extern int exynos_fimc_is_clk_on(struct platform_device *pdev);
 extern int exynos_fimc_is_clk_off(struct platform_device *pdev);
 extern int exynos_fimc_is_print_cfg(struct platform_device *pdev, u32 channel);
 extern int exynos_fimc_is_print_pwr(struct platform_device *pdev);
+extern int exynos_fimc_is_clk_gate(u32 clk_gate_id, bool is_on);
+extern int exynos_fimc_is_set_user_clk_gate(u32 group_id,
+		bool is_on,
+		u32 user_scenario_id,
+		unsigned long msk_state,
+		struct exynos_fimc_is_clk_gate_info *gate_info);
 
 /* platform specific clock functions */
 #if defined(CONFIG_ARCH_EXYNOS4)

@@ -37,6 +37,87 @@ u32 __iomem *last_fcount1;
 
 extern struct fimc_is_sysfs_debug sysfs_debug;
 
+/* func to register error report callback */
+int fimc_is_set_err_report_vendor(struct fimc_is_interface *itf,
+		void *err_report_data,
+		int (*err_report_vendor)(void *data, u32 err_report_type))
+{
+	if (itf) {
+		itf->err_report_data = err_report_data;
+		itf->err_report_vendor = err_report_vendor;
+	}
+
+	return 0;
+}
+
+/* main func to handle error report */
+static int fimc_is_err_report_handler(struct fimc_is_interface *itf, struct fimc_is_msg *msg)
+{
+	struct fimc_is_device_ischain *device;
+	struct fimc_is_core *core;
+	unsigned long dtp_wait_time;
+
+	core = itf->core;
+	device = &core->ischain[msg->instance];
+	dtp_wait_time = device->sensor->dtp_timer.expires;
+
+	err("IHC_REPORT_ERR(%d,%d,%d,%d,%d) is occured",
+			msg->instance,
+			msg->group,
+			msg->parameter1,
+			msg->parameter2,
+			msg->parameter3);
+
+	/*
+	 * if vendor error report func was registered,
+	 * call the func.
+	 */
+	if (itf->err_report_vendor)
+		itf->err_report_vendor(itf->err_report_data, msg->parameter2);
+
+	switch (msg->parameter2) {
+	case REPORT_ERR_CIS_ID:
+		warn("Occured the ERR_ID");
+		break;
+	case REPORT_ERR_CIS_ECC:
+		warn("Occured the ERR_ECC");
+	case REPORT_ERR_CIS_CRC:
+		warn("Occured the ERR_CRC");
+#ifdef ENABLE_DTP
+		if (dtp_wait_time >= jiffies)
+			set_bit(FIMC_IS_BAD_FRAME_STOP, &device->sensor->force_stop);
+#endif
+
+		break;
+	case REPORT_ERR_CIS_OVERFLOW_VC0:
+		warn("Occured the OVERFLOW_VC0");
+		break;
+	case REPORT_ERR_CIS_LOST_FE_VC0:
+		warn("Occured the LOST_FE_VC0");
+		break;
+	case REPORT_ERR_CIS_LOST_FS_VC0:
+		warn("Occured the LOST_FS_VC0");
+		break;
+	case REPORT_ERR_CIS_SOT_VC0:
+		warn("Occured the SOT_VC0");
+		break;
+	case REPORT_ERR_CIS_SOT_VC1:
+		warn("Occured the SOT_VC1");
+		break;
+	case REPORT_ERR_CIS_SOT_VC2:
+		warn("Occured the SOT_VC2");
+		break;
+	case REPORT_ERR_CIS_SOT_VC3:
+		warn("Occured the SOT_VC3");
+		break;
+	default:
+		warn("parameter is default");
+		break;
+	}
+
+	return 0;
+}
+
 int print_fre_work_list(struct fimc_is_work_list *this)
 {
 	struct list_head *temp;
@@ -150,6 +231,36 @@ int print_req_work_list(struct fimc_is_work_list *this)
 	}
 
 	printk(KERN_CONT "X\n");
+
+	return 0;
+}
+
+static int print_work_data_state(struct fimc_is_interface *this)
+{
+	struct work_struct *work;
+	unsigned long *bits = NULL;
+
+	work = &this->work_wq[INTR_GENERAL];
+	bits = (work_data_bits(work));
+	info("INTR_GENERAL wq state : (0x%lx)", *bits);
+	work = &this->work_wq[INTR_3A0C_FDONE];
+	bits = (work_data_bits(work));
+	info("INTR_3A0C_FDONE wq state : (0x%lx)", *bits);
+	work = &this->work_wq[INTR_3A1C_FDONE];
+	bits = (work_data_bits(work));
+	info("INTR_3A1C_FDONE wq state : (0x%lx)", *bits);
+	work = &this->work_wq[INTR_SCC_FDONE];
+	bits = (work_data_bits(work));
+	info("INTR_SCC_FDONE wq state : (0x%lx)", *bits);
+	work = &this->work_wq[INTR_DIS_FDONE];
+	bits = (work_data_bits(work));
+	info("INTR_DIS_FDONE wq state : (0x%lx)", *bits);
+	work = &this->work_wq[INTR_SCP_FDONE];
+	bits = (work_data_bits(work));
+	info("INTR_SCP_FDONE wq state : (0x%lx)", *bits);
+	work = &this->work_wq[INTR_SHOT_DONE];
+	bits = (work_data_bits(work));
+	info("INTR_SHOT_DONE wq state : (0x%lx)", *bits);
 
 	return 0;
 }
@@ -472,6 +583,9 @@ static int fimc_is_set_cmd(struct fimc_is_interface *itf,
 	if (ret) {
 		exit_request_barrier(itf);
 		err("%d command is timeout", msg->command);
+		fimc_is_hw_regdump(itf);
+		print_req_work_list(&itf->work_list[INTR_GENERAL]);
+		print_work_data_state(itf);
 		clr_busystate(itf, msg->command);
 		ret = -ETIME;
 		goto exit;
@@ -992,7 +1106,7 @@ static void wq_func_general(struct work_struct *data)
 #if (FW_HAS_REPORT_ERR_CMD)
 		case IHC_REPORT_ERR:
 			err("IHC_REPORT_ERR is occured");
-			fimc_is_hw_logdump(itf);
+			fimc_is_err_report_handler(itf, msg);
 			break;
 #endif
 		default:
@@ -1968,7 +2082,7 @@ static void interface_timer(unsigned long data)
 			}
 			spin_unlock_irq(&itf->shot_check_lock);
 
-			if (test_bit(FIMC_IS_GROUP_ACTIVE, &device->group_3aa.state)) {
+			if (test_bit(FIMC_IS_GROUP_READY, &device->group_3aa.state)) {
 				framemgr = GET_GROUP_FRAMEMGR(&device->group_3aa);
 				framemgr_e_barrier_irqs(framemgr, 0, flags);
 				scount_3ax = framemgr->frame_pro_cnt;
@@ -1976,7 +2090,7 @@ static void interface_timer(unsigned long data)
 				framemgr_x_barrier_irqr(framemgr, 0, flags);
 			}
 
-			if (test_bit(FIMC_IS_GROUP_ACTIVE, &device->group_isp.state)) {
+			if (test_bit(FIMC_IS_GROUP_READY, &device->group_isp.state)) {
 				framemgr = GET_GROUP_FRAMEMGR(&device->group_isp);
 				framemgr_e_barrier_irqs(framemgr, 0, flags);
 				scount_isp = framemgr->frame_pro_cnt;
@@ -1984,7 +2098,7 @@ static void interface_timer(unsigned long data)
 				framemgr_x_barrier_irqr(framemgr, 0, flags);
 			}
 
-			if (test_bit(FIMC_IS_GROUP_ACTIVE, &device->group_dis.state)) {
+			if (test_bit(FIMC_IS_GROUP_READY, &device->group_dis.state)) {
 				framemgr = GET_GROUP_FRAMEMGR(&device->group_dis);
 				framemgr_e_barrier_irqs(framemgr, 0, flags);
 				shot_count += framemgr->frame_pro_cnt;
@@ -2061,7 +2175,7 @@ static void interface_timer(unsigned long data)
 			atomic_set(&itf->sensor_check[i], fcount);
 		}
 
-		if (atomic_read(&itf->sensor_timeout[i]) > TRY_TIMEOUT_COUNT) {
+		if (atomic_read(&itf->sensor_timeout[i]) > SENSOR_TIMEOUT_COUNT) {
 			merr("sensor is timeout(%d, %d)", sensor,
 				atomic_read(&itf->sensor_timeout[i]),
 				atomic_read(&itf->sensor_check[i]));
@@ -2275,6 +2389,7 @@ int fimc_is_interface_probe(struct fimc_is_interface *this,
 	clear_bit(IS_IF_STATE_OPEN, &this->state);
 	clear_bit(IS_IF_STATE_START, &this->state);
 	clear_bit(IS_IF_STATE_BUSY, &this->state);
+	clear_bit(IS_IF_STATE_READY, &this->state);
 
 	init_work_list(&this->nblk_cam_ctrl,
 		TRACE_WORK_ID_CAMCTRL, MAX_NBLOCKING_COUNT);
@@ -2293,6 +2408,7 @@ int fimc_is_interface_probe(struct fimc_is_interface *this,
 	init_work_list(&this->work_list[INTR_SHOT_DONE],
 		TRACE_WORK_ID_SHOT, MAX_WORK_COUNT);
 
+	this->err_report_vendor = NULL;
 #ifdef MEASURE_TIME
 #ifdef INTERFACE_TIME
 	{
@@ -2331,6 +2447,7 @@ int fimc_is_interface_open(struct fimc_is_interface *this)
 	atomic_set(&this->lock_pid, 0);
 	clear_bit(IS_IF_STATE_START, &this->state);
 	clear_bit(IS_IF_STATE_BUSY, &this->state);
+	clear_bit(IS_IF_STATE_READY, &this->state);
 
 	init_timer(&this->timer);
 	this->timer.expires = jiffies +
@@ -2473,7 +2590,12 @@ int fimc_is_hw_regdump(struct fimc_is_interface *this)
 		goto p_err;
 	}
 
-	info("\n### MCUCTL dump ###\n");
+	info("\n### MCUCTL Raw Dump ###\n");
+	regs = (this->regs);
+	for (i = 0; i < 16; ++i)
+		info("MCTL Raw[%d] : %08X\n", i, readl(regs + (4 * i)));
+
+	info("\n### COMMON REGS dump ###\n");
 	regs = this->com_regs;
 	for (i = 0; i < 64; ++i)
 		info("MCTL[%d] : %08X\n", i, readl(regs + (4 * i)));
@@ -2557,6 +2679,10 @@ int fimc_is_hw_enum(struct fimc_is_interface *this)
 
 	dbg_interface("enum()\n");
 
+	/* check if hw_enum is already operated */
+	if (test_bit(IS_IF_STATE_READY, &this->state))
+	    goto exit;
+
 	ret = wait_initstate(this);
 	if (ret) {
 		err("enum time out");
@@ -2586,6 +2712,8 @@ int fimc_is_hw_enum(struct fimc_is_interface *this)
 	writel(msg.parameter3, &com_regs->hic_param3);
 	writel(msg.parameter4, &com_regs->hic_param4);
 	send_interrupt(this);
+
+	set_bit(IS_IF_STATE_READY, &this->state);
 
 exit:
 	return ret;

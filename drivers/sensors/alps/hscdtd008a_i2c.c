@@ -78,6 +78,8 @@ static int      tcs_thr;
 static int      tcs_cnt;
 static s8 orient[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
 
+void (*alps_magnetic_vddpower)(bool);
+
 static int hscd_i2c_readm(char *rxData, int length)
 {
 	int err;
@@ -156,22 +158,44 @@ static int hscd_power_on(void)
 
 	alps_info("is called\n");
 
+	 /* Power on */
+	if (alps_magnetic_vddpower)
+		alps_magnetic_vddpower(true);
+
+	return err;
+}
+
+static int hscd_power_off(void)
+{
+	int err = 0;
+
+	alps_info("is called\n");
+
+	/* Power off */
+	if (alps_magnetic_vddpower)
+		alps_magnetic_vddpower(false);
+
 	return err;
 }
 
 int hscd_self_test_A(void)
 {
 	u8 sx[2], cr1[1];
+	int rc = 0;
 
 	if (atomic_read(&flagSuspend) == 1)
 		return -1;
 
 	alps_info("is called\n");
 
+	hscd_power_on();
+
 	/* Control register1 backup  */
 	cr1[0] = HSCD_CTRL1;
-	if (hscd_i2c_readm(cr1, 1))
-		return 1;
+	if (hscd_i2c_readm(cr1, 1)) {
+		rc = 1;
+		goto Exit1;
+	}
 #ifdef ALPS_DEBUG
 	else
 		alps_dbgmsg("Control resister1 value, %02X\n", cr1[0]);
@@ -181,9 +205,10 @@ int hscd_self_test_A(void)
 	/* Move active Mode (force state) */
 	sx[0] = HSCD_CTRL1;
 	sx[1] = 0x8A;
-	if (hscd_i2c_writem(sx, 2))
-		return 1;
-
+	if (hscd_i2c_writem(sx, 2)) {
+		rc = 1;
+		goto Exit;
+	}
 	/* Get inital value of self-test-A register */
 	sx[0] = HSCD_STB;
 	hscd_i2c_readm(sx, 1);
@@ -191,58 +216,75 @@ int hscd_self_test_A(void)
 	mdelay(1);
 
 	sx[0] = HSCD_STB;
-	if (hscd_i2c_readm(sx, 1))
-		return 1;
+	if (hscd_i2c_readm(sx, 1)) {
+		 rc = 1;
+		goto Exit;
+	}
 #ifdef ALPS_DEBUG
 	else
 		alps_dbgmsg("Self test A register value, %02X\n", sx[0]);
 #endif
 	if (sx[0] != 0x55) {
 		alps_errmsg("Err! self-test-A, initial value is %02X\n", sx[0]);
-		return 2;
+		rc = 2;
+		goto Exit;
 	}
 
 	/* do self-test*/
 	sx[0] = HSCD_CTRL3;
 	sx[1] = 0x10;
-	if (hscd_i2c_writem(sx, 2))
-		return 1;
+	if (hscd_i2c_writem(sx, 2)) {
+		rc = 1;
+		goto Exit;
+	}
 	mdelay(3);
 
 	/* Get 1st value of self-test-A register */
 	sx[0] = HSCD_STB;
-	if (hscd_i2c_readm(sx, 1))
-		return 1;
+	if (hscd_i2c_readm(sx, 1)) {
+		rc = 1;
+		goto Exit;
+	}
 #ifdef ALPS_DEBUG
 	else
 		alps_dbgmsg("Self test register value, %02X\n", sx[0]);
 #endif
 	if (sx[0] != 0xAA) {
 		alps_errmsg("Err! self-test, 1st value is %02X\n", sx[0]);
-		return 3;
+		rc = 3;
+		goto Exit;
 	}
 	mdelay(3);
 
 	/* Get 2nd value of self-test register */
 	sx[0] = HSCD_STB;
-	if (hscd_i2c_readm(sx, 1))
-		return 1;
+	if (hscd_i2c_readm(sx, 1)){
+		rc = 1;
+		goto Exit;
+	}
 #ifdef ALPS_DEBUG
 	else
 		alps_dbgmsg("Self test register value, %02X\n", sx[0]);
 #endif
 	if (sx[0] != 0x55) {
 		alps_errmsg("Err! self-test, 2nd value is %02X\n", sx[0]);
-		return 4;
+		rc = 4;
+		goto Exit;
 	}
 
+Exit:
 	/* Resume */
 	sx[0] = HSCD_CTRL1;
 	sx[1] = cr1[0];
-	if (hscd_i2c_writem(sx, 2))
-		return 1;
+	if (hscd_i2c_writem(sx, 2)) {
+		rc = 1;
+	}
 
-	return 0;
+Exit1:
+	if (!atomic_read(&flag_enable))
+		hscd_power_off();
+
+	return rc;
 }
 EXPORT_SYMBOL(hscd_self_test_A);
 
@@ -312,6 +354,11 @@ int hscd_get_magnetic_field_data(int *xyz)
 	u8 sx[6] = {0, };
 	int axis[3];
 
+	if (this_client == NULL) {
+		alps_info("client null\n");
+		return -ENODEV;
+	}
+
 	if (atomic_read(&flagSuspend) == 1)
 		return err;
 
@@ -359,6 +406,7 @@ void hscd_activate(int flagatm, int flag, int dtime)
 		dtime = atomic_read(&delay);
 
 	if (flag != 0) {
+		hscd_power_on();
 		buf[0] = HSCD_CTRL4;	/* 15 bit signed value */
 		buf[1] = 0x90;
 		hscd_i2c_writem(buf, 2);
@@ -369,10 +417,7 @@ void hscd_activate(int flagatm, int flag, int dtime)
 	}
 	if ((!flag) && (enable)) {
 		hscd_soft_reset();
-	} else if (!flag) {
-		buf[0] = HSCD_CTRL1;
-		buf[1] = 0x0A;
-		hscd_i2c_writem(buf, 2);
+		hscd_power_off();
 	} else if ((flag) && (!enable)) {
 		buf[0] = HSCD_CTRL1;
 		buf[1] = 0x8A;
@@ -416,9 +461,6 @@ static ssize_t selftest_show(struct device *dev,
 {
 	int result1, result2;
 
-	if (!atomic_read(&flag_enable))
-		hscd_power_on();
-
 	result1 = hscd_self_test_A();
 	result2 = hscd_self_test_B();
 
@@ -444,9 +486,6 @@ static ssize_t status_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
 	int result;
-
-	if (!atomic_read(&flag_enable))
-		hscd_power_on();
 
 	result = hscd_self_test_B();
 
@@ -552,6 +591,8 @@ static int hscd_probe(struct i2c_client *client,
 		ret = -ENOMEM;
 		goto exit;
 	}
+	if (pdata->alps_magnetic_power != NULL)
+		alps_magnetic_vddpower = pdata->alps_magnetic_power;
 
 	/* turn on the power */
 	hscd_power_on();
@@ -561,7 +602,7 @@ static int hscd_probe(struct i2c_client *client,
 	/* read chip id */
 	ret = i2c_smbus_read_byte_data(this_client, WHO_AM_I);
 	alps_info("Device ID = 0x%x, Reading ID = 0x%x\n", DEVICE_ID, ret);
-	if (pdata)
+	if (pdata->orient != NULL)
 		memcpy(orient, pdata->orient, sizeof(orient));
 
 	if (ret == DEVICE_ID) /* Normal Operation */
@@ -586,13 +627,20 @@ static int hscd_probe(struct i2c_client *client,
 	tcs_cnt = 0;
 	tcs_thr = HSCD_TCS_TIME / atomic_read(&delay);
 
+	if (alps_magnetic_vddpower)
+		alps_magnetic_vddpower(false);
+
 	alps_info("is Successful\n");
+
+	hscd_power_off();
 
 	return 0;
 
 exit:
 	this_client = NULL;
 	alps_errmsg("Failed (errno = %d)\n", ret);
+
+	hscd_power_off();
 
 	return ret;
 }
@@ -626,8 +674,10 @@ static int hscd_resume(struct i2c_client *client)
 	alps_info("is called\n");
 
 	atomic_set(&flagSuspend, 0);
-	if (atomic_read(&flag_enable))
-		hscd_activate(0, atomic_read(&flag_enable), atomic_read(&delay));
+	if (atomic_read(&flag_enable)) {
+		atomic_set(&flag_enable, 0);
+		hscd_activate(1, 1, atomic_read(&delay));
+	}
 
 	return 0;
 }

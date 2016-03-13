@@ -240,6 +240,12 @@ endif # LCD_CLASS_DEVICE
 #
 # Backlight
 #
+config BACKLIGHT_POLLING_AMOLED
+	bool "Using polling system for FIFO emtpy check"
+	default n
+	---help---
+	  This enables support for polling method to change brightness
+
 config BACKLIGHT_CLASS_DEVICE
         tristate "Lowlevel Backlight controls"
 	default m

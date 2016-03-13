@@ -54,6 +54,9 @@
  *    - 404 : USA SPR
  *    - 405 : USA USC
  *    - 406 : CAN OPEN
+ *    - 407 : USA MPCS
+ *    - 408 : USA ACG
+ *    - 409 : USA LRA
  *    You can refer how to using it below this file.
  *    And, you can add more region code, too.
  */
@@ -61,12 +64,18 @@
 #ifndef _dhd_sec_feature_h_
 #define _dhd_sec_feature_h_
 
+#include <linuxver.h>
+
 /* For COB type feature */
 #ifdef CONFIG_WIFI_BROADCOM_COB
 #undef USE_CID_CHECK
 #define READ_MACADDR
 #endif  /* CONFIG_WIFI_BROADCOM_COB */
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 4, 0)) && (defined(CONFIG_BCM4334) || \
+	defined(CONFIG_BCM4334_MODULE))
+#define RXFRAME_THREAD
+#endif /* (LINUX_VERSION  >= VERSION(3, 4, 0)) && ( CONFIG_BCM4334 || CONFIG_BCM4334_MODULE) */
 
 /* PROJECTS START */
 
@@ -145,8 +154,10 @@
 #endif /* CONFIG_WLAN_REGION_CODE >= 300 && CONFIG_WLAN_REGION_CODE < 400 */
 
 #if (CONFIG_WLAN_REGION_CODE >= 400) && (CONFIG_WLAN_REGION_CODE < 500) /* USA */
-/* TX Power control when Calling */
+/* TX Power control when Calling by Samsung */
 #define TX_POWER_CONTROL_CALLING
+/* TX Power control when Calling by Broadcom */
+#undef SARLIMIT_TX_CONTROL_NVRAM
 #define TX_CALLING_POWER -1
 
 #if (CONFIG_WLAN_REGION_CODE == 401) /* ATT */
@@ -180,6 +191,21 @@
 #undef TX_CALLING_POWER
 #define TX_CALLING_POWER 9
 #endif /* CONFIG_WLAN_REGION_CODE == 406 */
+
+#if (CONFIG_WLAN_REGION_CODE == 407) /* MPCS */
+#undef TX_CALLING_POWER
+#define TX_CALLING_POWER 9
+#endif /* CONFIG_WLAN_REGION_CODE == 407 */
+
+#if (CONFIG_WLAN_REGION_CODE == 408) /* ACG */
+#undef TX_CALLING_POWER
+#define TX_CALLING_POWER 7
+#endif /* CONFIG_WLAN_REGION_CODE == 408 */
+
+#if (CONFIG_WLAN_REGION_CODE == 409) /* LRA */
+#undef TX_CALLING_POWER
+#define TX_CALLING_POWER 7
+#endif /* CONFIG_WLAN_REGION_CODE == 409 */
 
 #endif /* CONFIG_WLAN_REGION_CODE >= 400 && CONFIG_WLAN_REGION_CODE < 500 */
 

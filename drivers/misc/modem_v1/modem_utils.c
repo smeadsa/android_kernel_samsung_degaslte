@@ -239,21 +239,26 @@ void _mif_time_log(enum mif_log_id id, struct modem_shared *msd,
  * the length of @buff must be greater than "@len * 3"
  * it need 3 bytes per one data byte to print.
  */
-static inline int dump2hex(char *buff, const char *data, size_t len)
+static inline int dump2hex(char *buff, size_t size, const char *data,
+			   size_t len)
 {
 	char *dest = buff;
 	int i;
+
+	if (size < (len * 3))
+		goto exit;
 
 	for (i = 0; i < len; i++) {
 		*dest++ = hex[(data[i] >> 4) & 0xf];
 		*dest++ = hex[data[i] & 0xf];
 		*dest++ = ' ';
 	}
+
 	if (likely(len > 0))
-		dest--; /* last space will be overwrited with null */
+		dest--; /* last space will be overwritten with null */
 
-	*dest = '\0';
-
+exit:
+	*dest = 0;
 	return dest - buff;
 }
 
@@ -263,7 +268,7 @@ void pr_ipc(int level, const char *tag, const char *data, size_t len)
 	unsigned char str[128];
 
 	get_utc_time(&utc);
-	dump2hex(str, data, (len > 32 ? 32 : len));
+	dump2hex(str, 128, data, (len > 32 ? 32 : len));
 
 	if (level > 0) {
 		pr_err("%s: " HMSU_FMT " %s: %s\n", MIF_TAG,
@@ -298,7 +303,8 @@ static inline void pr_ipc_msg(int level, u8 ch, struct timespec *ts,
 		snprintf(str, MAX_STR_LEN, "%s", prefix);
 
 	offset = strlen(str);
-	dump2hex((str + offset), msg, (len > MAX_HEX_LEN ? MAX_HEX_LEN : len));
+	dump2hex((str + offset), (MAX_STR_LEN - offset), msg,
+		 (len > MAX_HEX_LEN ? MAX_HEX_LEN : len));
 
 	if (level > 0) {
 		pr_err("%s: " HMSU_FMT " %s\n", MIF_TAG,
@@ -350,8 +356,8 @@ void log_ipc_pkt(u8 ch, enum ipc_layer layer, enum direction dir,
 	 */
 	if (h && hlen > 0) {
 		size_t offset = strlen(prefix);
-		dump2hex((prefix + offset), h, hlen);
-		strncat(prefix, " | ", MAX_PREFIX_LEN);
+		dump2hex((prefix + offset), (MAX_PREFIX_LEN - offset), h, hlen);
+		strncat(prefix, " | ", (MAX_PREFIX_LEN - strlen(prefix)));
 	}
 
 	/**
@@ -390,12 +396,27 @@ int pr_buffer(const char *tag, const char *data, size_t data_len,
 							size_t max_len)
 {
 	size_t len = min(data_len, max_len);
-	unsigned char str[len ? len * 3 : 1]; /* 1 <= sizeof <= max_len*3 */
-	dump2hex(str, data, len);
+	size_t size;
+	unsigned char *str;
+	int ret;
+
+	if (len == 0)
+		return 0;
+
+	size = len * 3;
+	str = kmalloc(size, in_interrupt() ? GFP_ATOMIC : GFP_KERNEL);
+	if (!str)
+		return 0;
+
+	dump2hex(str, size, data, len);
 
 	/* don't change this printk to mif_debug for print this as level7 */
-	return printk(KERN_INFO "%s: %s(%u): %s%s\n", MIF_TAG, tag, data_len,
+	ret = printk(KERN_INFO "%s: %s(%u): %s%s\n", MIF_TAG, tag, data_len,
 			str, (len == data_len) ? "" : " ...");
+
+	kfree(str);
+
+	return ret;
 }
 
 /* flow control CM from CP, it use in serial devices */
@@ -1243,7 +1264,7 @@ void mif_init_irq(struct modem_irq *irq, unsigned int num, const char *name,
 {
 	spin_lock_init(&irq->lock);
 	irq->num = num;
-	strncpy(irq->name, name, MAX_NAME_LEN);
+	strncpy(irq->name, name, (MAX_NAME_LEN - 1));
 	irq->flags = flags;
 	mif_err("name:%s num:%d flags:0x%08lX\n", name, num, flags);
 }

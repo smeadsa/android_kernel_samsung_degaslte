@@ -549,7 +549,7 @@ void sec_debug_set_upload_magic(unsigned magic, char *str)
 	pr_emerg("(%s) %x\n", __func__, magic);
 
 	*(unsigned int *)SEC_DEBUG_MAGIC_VA = magic;
-	*(unsigned int *)(SEC_DEBUG_MAGIC_VA + 0x4000) = magic;
+	*(unsigned int *)(SEC_DEBUG_MAGIC_VA + 0x4000- 4) = magic;
 
 	if (str)
 		strncpy((char *)SEC_DEBUG_MAGIC_VA + 4, str, SZ_1K - 4);
@@ -1676,6 +1676,8 @@ static int sec_input_debug_probe(struct platform_device *pdev)
 	int i = 0;
 
 	ddata = kzalloc(sizeof(struct input_debug_drv_data), GFP_KERNEL);
+	if (!ddata)
+		return -ENOMEM;
 
 	ddata->pdata = pdata;
 

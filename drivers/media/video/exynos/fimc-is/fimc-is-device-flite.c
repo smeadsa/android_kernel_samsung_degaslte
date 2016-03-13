@@ -927,6 +927,21 @@ p_err:
 	return ret;
 }
 
+static inline void flite_set_ovf_stop(struct fimc_is_device_flite *flite)
+{
+	struct fimc_is_device_sensor *device;
+
+	device = container_of(flite->subdev, struct fimc_is_device_sensor, subdev_flite);
+
+	if (test_bit(FIMC_IS_SENSOR_FRONT_DTP_STOP, &device->state))
+		return;
+
+	/* set dtp */
+	set_bit(FIMC_IS_FLITE_OVERFLOW_STOP, &device->force_stop);
+
+	return;
+}
+
 static u32 g_print_cnt;
 #define LOG_INTERVAL_OF_DROPS 30
 static void tasklet_flite_str0(unsigned long data)
@@ -965,13 +980,13 @@ static void tasklet_flite_str0(unsigned long data)
 	if (atomic_read(&flite->bcount) == 2) {
 		if ((bstart == FLITE_A_SLOT_VALID) &&
 			(present != FLITE_A_SLOT_VALID)) {
-			warn("wrong SW buffer slot A(sw:%d != hw:%d)", bstart, present);
+			mwarn("wrong SW buffer slot A(sw:%d != hw:%d)", flite, bstart, present);
 			flite->sw_trigger = bstart = FLITE_B_SLOT_VALID;
 		}
 
 		if ((bstart == FLITE_B_SLOT_VALID) &&
 			(present != FLITE_B_SLOT_VALID)) {
-			warn("wrong SW buffer slot B(sw:%d != hw:%d)", bstart, present);
+			mwarn("wrong SW buffer slot B(sw:%d != hw:%d)", flite, bstart, present);
 			flite->sw_trigger = bstart = FLITE_A_SLOT_VALID;
 		}
 	}
@@ -1035,13 +1050,13 @@ static void tasklet_flite_str1(unsigned long data)
 	if (atomic_read(&flite->bcount) == 2) {
 		if ((bstart == FLITE_A_SLOT_VALID) &&
 			(present != FLITE_A_SLOT_VALID)) {
-			warn("wrong SW buffer slot A(sw:%d != hw:%d)", bstart, present);
+			mwarn("wrong SW buffer slot A(sw:%d != hw:%d)", flite, bstart, present);
 			flite->sw_trigger = bstart = FLITE_B_SLOT_VALID;
 		}
 
 		if ((bstart == FLITE_B_SLOT_VALID) &&
 			(present != FLITE_B_SLOT_VALID)) {
-			warn("wrong SW buffer slot B(sw:%d != hw:%d)", bstart, present);
+			mwarn("wrong SW buffer slot B(sw:%d != hw:%d)", flite, bstart, present);
 			flite->sw_trigger = bstart = FLITE_A_SLOT_VALID;
 		}
 	}
@@ -1083,6 +1098,13 @@ static void tasklet_flite_end(unsigned long data)
 		return;
 	}
 
+#ifdef ENABLE_FLITE_OVERFLOW_STOP
+	if (unlikely(flite->overflow_cnt)) {
+		flite_set_ovf_stop(flite);
+		goto ovf_exit;
+	}
+#endif
+
 	framemgr = flite->framemgr;
 	bdone = flite->tasklet_param_end;
 
@@ -1105,7 +1127,6 @@ static void tasklet_flite_end(unsigned long data)
 #endif
 			/* 1. current frame transition to completion */
 			frame_done = frame;
-			fimc_is_frame_trans_pro_to_com(framemgr, frame);
 
 			/* 2. next frame ready */
 			fimc_is_frame_request_head(framemgr, &frame);
@@ -1120,8 +1141,14 @@ static void tasklet_flite_end(unsigned long data)
 #ifdef TASKLET_MSG
 					merr("[SEN] request is empty0(%d slot)", flite, bdone);
 #endif
+				} else {
+					frame_done = NULL;
 				}
 			}
+
+			if (frame_done)
+				fimc_is_frame_trans_pro_to_com(framemgr, frame_done);
+
 		} else {
 #ifdef TASKLET_MSG
 			merr("[SEN] process is empty(%d, %ld)", flite, bdone, flite->state);
@@ -1149,6 +1176,9 @@ static void tasklet_flite_end(unsigned long data)
 
 	framemgr_x_barrier(framemgr, FMGR_IDX_1 + bdone);
 
+#ifdef ENABLE_FLITE_OVERFLOW_STOP
+ovf_exit:
+#endif
 	v4l2_subdev_notify(subdev, FLITE_NOTIFY_FEND, frame_done);
 	flite->early_work_called = true;
 }
@@ -1385,6 +1415,7 @@ clear_status:
 		u32 ciwdofst;
 
 		flite_hw_clr_ovf_interrupt_source(flite->base_reg);
+		flite->overflow_cnt++;
 
 		if ((flite->overflow_cnt % FLITE_OVERFLOW_COUNT == 0) ||
 			(flite->overflow_cnt < FLITE_OVERFLOW_COUNT))
@@ -1394,13 +1425,13 @@ clear_status:
 		writel(ciwdofst, flite->base_reg + TO_WORD_OFFSET(0x10));
 		ciwdofst  &= ~(0x1 << 14);
 		writel(ciwdofst, flite->base_reg + TO_WORD_OFFSET(0x10));
-		flite->overflow_cnt++;
 	}
 
 	if (status1 & (1 << 9)) {
 		u32 ciwdofst;
 
 		flite_hw_clr_ovf_interrupt_source(flite->base_reg);
+		flite->overflow_cnt++;
 
 		if ((flite->overflow_cnt % FLITE_OVERFLOW_COUNT == 0) ||
 			(flite->overflow_cnt < FLITE_OVERFLOW_COUNT))
@@ -1410,23 +1441,26 @@ clear_status:
 		writel(ciwdofst, flite->base_reg + TO_WORD_OFFSET(0x10));
 		ciwdofst  &= ~(0x1 << 15);
 		writel(ciwdofst, flite->base_reg + TO_WORD_OFFSET(0x10));
-		flite->overflow_cnt++;
 	}
 
 	if (status1 & (1 << 10)) {
 		u32 ciwdofst;
 
 		flite_hw_clr_ovf_interrupt_source(flite->base_reg);
+		flite->overflow_cnt++;
 
 		if ((flite->overflow_cnt % FLITE_OVERFLOW_COUNT == 0) ||
-			(flite->overflow_cnt < FLITE_OVERFLOW_COUNT))
+			(flite->overflow_cnt < FLITE_OVERFLOW_COUNT)) {
 			pr_err("[CamIF%d] OFY(cnt:%u)\n", flite->instance, flite->overflow_cnt);
+#ifdef ENABLE_FLITE_OVERFLOW_STOP
+			tasklet_schedule(&flite->tasklet_flite_end);
+#endif
+		}
 		ciwdofst = readl(flite->base_reg + TO_WORD_OFFSET(0x10));
 		ciwdofst  |= (0x1 << 30);
 		writel(ciwdofst, flite->base_reg + TO_WORD_OFFSET(0x10));
 		ciwdofst  &= ~(0x1 << 30);
 		writel(ciwdofst, flite->base_reg + TO_WORD_OFFSET(0x10));
-		flite->overflow_cnt++;
 	}
 
 	return IRQ_HANDLED;
@@ -1688,7 +1722,7 @@ p_err:
 
 static int flite_stream_off(struct v4l2_subdev *subdev,
 	struct fimc_is_device_flite *flite,
-	bool wait)
+	bool nowait)
 {
 	int ret = 0;
 	unsigned long __iomem *base_reg;
@@ -1710,7 +1744,7 @@ static int flite_stream_off(struct v4l2_subdev *subdev,
 	flite_hw_set_output_local(base_reg, false);
 
 	stop_fimc_lite(base_reg);
-	if (wait) {
+	if (!nowait) {
 		u32 timetowait;
 
 		timetowait = wait_event_timeout(flite->wait_queue,
@@ -1921,6 +1955,8 @@ int fimc_is_flite_probe(struct fimc_is_device_sensor *device,
 		goto err_alloc_flite;
 	}
 
+	/* pointer to me from device sensor */
+	flite->subdev = &device->subdev_flite;
 	flite->instance = instance;
 	init_waitqueue_head(&flite->wait_queue);
 	switch(instance) {

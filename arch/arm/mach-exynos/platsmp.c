@@ -185,9 +185,17 @@ static int exynos_power_up_cpu(unsigned int cpu)
 	/*
 	 * Check Power down cpu wait on WFE, and occur SW reset
 	 */
+	timeout = 100;
 	if (soc_is_exynos3470() || soc_is_exynos3250()) {
-		while(!__raw_readl(EXYNOS_PMUREG(0x0908)))
+		while( !__raw_readl(EXYNOS_PMUREG(0x0908)) && timeout) {
 			udelay(10);
+			timeout --;
+		}
+
+		if (timeout == 0) {
+			pr_err("%s: failed to get SW Reset for cpu: %d\n", __func__, cpu);
+			return -ETIMEDOUT;
+		}
 
 		udelay(10);
 

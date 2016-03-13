@@ -22,6 +22,8 @@
 #define FIMC_IS_MODULE_NAME			"exynos5-fimc-is"
 #elif defined(CONFIG_VIDEO_EXYNOS3_FIMC_IS)
 #define FIMC_IS_MODULE_NAME			"exynos3-fimc-is"
+#else
+#define FIMC_IS_MODULE_NAME			"exynos-fimc-is"
 #endif
 
 #define FIMC_IS_MAX_CAMIF_CLIENTS	2

@@ -519,19 +519,28 @@ p_err:
 static void fimc_is_sensor_dtp(unsigned long data)
 {
 	struct fimc_is_video_ctx *vctx;
-	struct fimc_is_device_sensor *device;
-	struct fimc_is_device_ischain *ischain;
+	struct fimc_is_device_sensor *device = (struct fimc_is_device_sensor *)data;
 	struct fimc_is_queue *queue;
 	struct fimc_is_framemgr *framemgr;
 	struct fimc_is_frame *frame;
 	unsigned long flags;
 	u32 i;
 
-	BUG_ON(!data);
+	BUG_ON(!device);
 
-	err("DTP is detected, forcely reset");
+	err("forcely reset due to 0x%08lx", device->force_stop);
+	device->force_stop = 0;
 
-	device = (struct fimc_is_device_sensor *)data;
+	set_bit(FIMC_IS_SENSOR_FRONT_DTP_STOP, &device->state);
+	set_bit(FIMC_IS_SENSOR_BACK_NOWAIT_STOP, &device->state);
+
+	if (device->ischain) {
+		set_bit(FIMC_IS_GROUP_FORCE_STOP, &device->ischain->group_3aa.state);
+		set_bit(FIMC_IS_GROUP_FORCE_STOP, &device->ischain->group_isp.state);
+		if (test_bit(FIMC_IS_GROUP_OTF_INPUT, &device->ischain->group_3aa.state))
+			up(&device->ischain->group_3aa.smp_trigger);
+	}
+
 	vctx = device->vctx;
 	if (!vctx) {
 		err("vctx is NULL");
@@ -540,24 +549,9 @@ static void fimc_is_sensor_dtp(unsigned long data)
 
 	queue = GET_DST_QUEUE(vctx);
 	framemgr = &queue->framemgr;
-	if ((framemgr->frame_cnt == 0) || (framemgr->frame_cnt >= FRAMEMGR_MAX_REQUEST)) {
+	if ((framemgr->frame_cnt == 0) || (framemgr->frame_cnt > FRAMEMGR_MAX_REQUEST)) {
 		err("frame count of framemgr is invalid(%d)", framemgr->frame_cnt);
 		return;
-	}
-
-	set_bit(FIMC_IS_SENSOR_BACK_NOWAIT_STOP, &device->state);
-
-	if (!test_bit(FIMC_IS_SENSOR_DRIVING, &device->state)) {
-		ischain = device->ischain;
-		if (!ischain) {
-			err("ischain is NULL");
-			return;
-		}
-
-		set_bit(FIMC_IS_GROUP_FORCE_STOP, &ischain->group_3aa.state);
-		set_bit(FIMC_IS_GROUP_FORCE_STOP, &ischain->group_isp.state);
-		if (test_bit(FIMC_IS_GROUP_OTF_INPUT, &ischain->group_3aa.state))
-			up(&ischain->group_3aa.smp_trigger);
 	}
 
 	framemgr_e_barrier_irqs(framemgr, 0, flags);
@@ -565,11 +559,11 @@ static void fimc_is_sensor_dtp(unsigned long data)
 	for (i = 0; i < framemgr->frame_cnt; i++) {
 		frame = &framemgr->frame[i];
 		if (frame->state == FIMC_IS_FRAME_STATE_REQUEST) {
-			pr_err("%s buffer done1!!!! %d \n", __func__, i);
+			err("buffer done1!!!! %d", i);
 			fimc_is_frame_trans_req_to_com(framemgr, frame);
 			queue_done(vctx, queue, i, VB2_BUF_STATE_ERROR);
 		} else if (frame->state == FIMC_IS_FRAME_STATE_PROCESS) {
-			pr_err("%s buffer done2!!!! %d \n", __func__, i);
+			err("buffer done2!!!! %d", i);
 			fimc_is_frame_trans_pro_to_com(framemgr, frame);
 			queue_done(vctx, queue, i, VB2_BUF_STATE_ERROR);
 		}
@@ -722,6 +716,12 @@ static int fimc_is_sensor_notify_by_fstr(struct fimc_is_device_sensor *device, v
 	device->fcount = *(u32 *)arg;
 	framemgr = GET_DST_FRAMEMGR(device->vctx);
 
+	if (device->instant_cnt) {
+		device->instant_cnt--;
+		if (device->instant_cnt == 0)
+			wake_up(&device->instant_wait);
+	}
+
 	framemgr_e_barrier(framemgr, 0);
 
 	fimc_is_frame_process_head(framemgr, &frame);
@@ -774,7 +774,6 @@ static int fimc_is_sensor_notify_by_fend(struct fimc_is_device_sensor *device, v
 {
 	int ret = 0;
 	struct fimc_is_frame *frame;
-	struct fimc_is_group *group_3aa;
 
 	BUG_ON(!device);
 	BUG_ON(!device->vctx);
@@ -784,24 +783,10 @@ static int fimc_is_sensor_notify_by_fend(struct fimc_is_device_sensor *device, v
 		device->dtp_check = false;
 		del_timer(&device->dtp_timer);
 	}
+
+	if (device->force_stop)
+		fimc_is_sensor_dtp((unsigned)device);
 #endif
-
-	if (device->instant_cnt) {
-		if (IS_ISCHAIN_OTF(device->ischain)) {
-			group_3aa = &device->ischain->group_3aa;
-
-			if (((atomic_read(&group_3aa->sensor_fcount) - group_3aa->async_shots) >= device->instant_cnt)
-				&& (atomic_read(&group_3aa->scount) >= device->instant_cnt)) {
-
-				device->instant_cnt = 0;
-				wake_up(&device->instant_wait);
-			}
-		} else {
-			device->instant_cnt--;
-			if (device->instant_cnt == 0)
-				wake_up(&device->instant_wait);
-		}
-	}
 
 	frame = (struct fimc_is_frame *)arg;
 	if (frame) {
@@ -854,13 +839,14 @@ static void fimc_is_sensor_instanton(struct work_struct *data)
 	device = container_of(data, struct fimc_is_device_sensor, instant_work);
 	instant_cnt = device->instant_cnt;
 
+	clear_bit(FIMC_IS_SENSOR_FRONT_DTP_STOP, &device->state);
+	clear_bit(FIMC_IS_SENSOR_BACK_NOWAIT_STOP, &device->state);
+
 	ret = fimc_is_sensor_start(device);
 	if (ret) {
 		merr("fimc_is_sensor_start is fail(%d)\n", device, ret);
 		goto p_err;
 	}
-
-	clear_bit(FIMC_IS_SENSOR_BACK_NOWAIT_STOP, &device->state);
 	set_bit(FIMC_IS_SENSOR_FRONT_START, &device->state);
 
 #ifdef ENABLE_DTP
@@ -957,7 +943,12 @@ static int fimc_is_sensor_probe(struct platform_device *pdev)
 
 	/* 3. state init*/
 	clear_bit(FIMC_IS_SENSOR_OPEN, &device->state);
+	clear_bit(FIMC_IS_SENSOR_MCLK_ON, &device->state);
+	clear_bit(FIMC_IS_SENSOR_ICLK_ON, &device->state);
+	clear_bit(FIMC_IS_SENSOR_GPIO_ON, &device->state);
+	clear_bit(FIMC_IS_SENSOR_DRIVING, &device->state);
 	clear_bit(FIMC_IS_SENSOR_FRONT_START, &device->state);
+	clear_bit(FIMC_IS_SENSOR_FRONT_DTP_STOP, &device->state);
 	clear_bit(FIMC_IS_SENSOR_BACK_START, &device->state);
 	clear_bit(FIMC_IS_SENSOR_BACK_NOWAIT_STOP, &device->state);
 
@@ -971,7 +962,7 @@ static int fimc_is_sensor_probe(struct platform_device *pdev)
 		goto p_err;
 	}
 
-#if defined(CONFIG_SOC_EXYNOS5430)
+#if defined(CONFIG_SOC_EXYNOS5430) || defined(CONFIG_SOC_EXYNOS5433)
 #if defined(CONFIG_VIDEOBUF2_ION)
 	if (device->mem.alloc_ctx)
 		vb2_ion_attach_iommu(device->mem.alloc_ctx);
@@ -1040,10 +1031,15 @@ int fimc_is_sensor_open(struct fimc_is_device_sensor *device,
 		goto p_err;
 	}
 
-	clear_bit(FIMC_IS_SENSOR_FRONT_START, &device->state);
-	clear_bit(FIMC_IS_SENSOR_BACK_START, &device->state);
+	clear_bit(FIMC_IS_SENSOR_MCLK_ON, &device->state);
+	clear_bit(FIMC_IS_SENSOR_ICLK_ON, &device->state);
+	clear_bit(FIMC_IS_SENSOR_GPIO_ON, &device->state);
 	clear_bit(FIMC_IS_SENSOR_DRIVING, &device->state);
+	clear_bit(FIMC_IS_SENSOR_FRONT_START, &device->state);
+	clear_bit(FIMC_IS_SENSOR_FRONT_DTP_STOP, &device->state);
+	clear_bit(FIMC_IS_SENSOR_BACK_START, &device->state);
 	set_bit(FIMC_IS_SENSOR_BACK_NOWAIT_STOP, &device->state);
+
 	device->vctx = vctx;
 	device->fcount = 0;
 	device->instant_cnt = 0;
@@ -1052,6 +1048,7 @@ int fimc_is_sensor_open(struct fimc_is_device_sensor *device,
 	device->subdev_module = NULL;
 	device->exposure_time = 0;
 	device->frame_duration = 0;
+	device->force_stop = 0;
 	memset(&device->sensor_ctl, 0, sizeof(struct camera2_sensor_ctl));
 	memset(&device->lens_ctl, 0, sizeof(struct camera2_lens_ctl));
 	memset(&device->flash_ctl, 0, sizeof(struct camera2_flash_ctl));
@@ -1153,7 +1150,6 @@ int fimc_is_sensor_close(struct fimc_is_device_sensor *device)
 		merr("fimc_is_resource_put is fail", device);
 
 	clear_bit(FIMC_IS_SENSOR_OPEN, &device->state);
-
 p_err:
 	info("[SEN:D:%d] %s(%d)\n", device->instance, __func__, ret);
 	return ret;
@@ -1167,10 +1163,10 @@ int fimc_is_sensor_s_input(struct fimc_is_device_sensor *device,
 	struct v4l2_subdev *subdev_module;
 	struct v4l2_subdev *subdev_csi;
 	struct v4l2_subdev *subdev_flite;
-	struct fimc_is_module_enum *module;
+	struct fimc_is_module_enum *module = NULL;
 	u32 sensor_ch, actuator_ch;
 	u32 sensor_addr, actuator_addr;
-	u32 i;
+	u32 i = 0;
 
 	BUG_ON(!device);
 	BUG_ON(!device->pdata);
@@ -1179,13 +1175,22 @@ int fimc_is_sensor_s_input(struct fimc_is_device_sensor *device,
 
 	for (i = 0; i < SENSOR_MAX_ENUM; i++) {
 		if (&device->module_enum[i] &&
-		device->module_enum[i].id == input) {
+			device->module_enum[i].id == input) {
 			module = &device->module_enum[i];
-			break;
+
+			/*
+			 * If it is not normal scenario,
+			 * try to find proper sensor module which has a i2c client
+			 */
+			if (scenario != SENSOR_SCENARIO_NORMAL &&
+				module->client == NULL)
+				continue;
+			else
+				break;
 		}
 	}
 
-	if (i == SENSOR_MAX_ENUM) {
+	if (i >= SENSOR_MAX_ENUM) {
 		merr("module is not probed", device);
 		ret = -EINVAL;
 		goto p_err;
@@ -1216,6 +1221,10 @@ int fimc_is_sensor_s_input(struct fimc_is_device_sensor *device,
 		module->ext.actuator_con.peri_setting.i2c.channel = actuator_ch;
 		module->ext.actuator_con.peri_setting.i2c.slave_address = actuator_addr;
 	}
+
+	/* send csi chennel to FW */
+	module->ext.sensor_con.reserved[0] = device->pdata->csi_ch;
+	module->ext.sensor_con.reserved[0] |= 0x0100;
 
 	module->ext.flash_con.peri_setting.gpio.first_gpio_port_no = device->pdata->flash_first_gpio;
 	module->ext.flash_con.peri_setting.gpio.second_gpio_port_no = device->pdata->flash_second_gpio;
@@ -1260,6 +1269,8 @@ int fimc_is_sensor_s_input(struct fimc_is_device_sensor *device,
 	if (ret) {
 		merr("v4l2_device_register_subdev is fail(%d)", device, ret);
 		goto p_err;
+	} else {
+		device->subdev_module = subdev_module;
 	}
 
 #if defined(CONFIG_PM_DEVFREQ)
@@ -1304,8 +1315,6 @@ int fimc_is_sensor_s_input(struct fimc_is_device_sensor *device,
 		}
 	}
 
-	device->subdev_module = subdev_module;
-
 #ifdef CONFIG_USE_VENDER_FEATURE
 	/* Set camid for reading cal data later.*/
 	if (module->position == SENSOR_POSITION_REAR)
@@ -1314,6 +1323,7 @@ int fimc_is_sensor_s_input(struct fimc_is_device_sensor *device,
 		fimc_is_sec_set_camid(CAMERA_SINGLE_FRONT);
 #endif
 p_err:
+
 	minfo("[SEN:D] %s(%d, %d, %d)\n", device, __func__, input, scenario, ret);
 	return ret;
 }
@@ -1786,27 +1796,27 @@ int fimc_is_sensor_buffer_queue(struct fimc_is_device_sensor *device,
 	if (index >= FRAMEMGR_MAX_REQUEST) {
 		err("index(%d) is invalid", index);
 		ret = -EINVAL;
-		goto exit;
+		goto p_err;
 	}
 
 	framemgr = &device->vctx->q_dst.framemgr;
 	if (framemgr == NULL) {
 		err("framemgr is null\n");
 		ret = EINVAL;
-		goto exit;
+		goto p_err;
 	}
 
 	frame = &framemgr->frame[index];
 	if (frame == NULL) {
 		err("frame is null\n");
 		ret = EINVAL;
-		goto exit;
+		goto p_err;
 	}
 
-	if (unlikely(frame->memory == FRAME_UNI_MEM)) {
+	if (unlikely(!test_bit(FRAME_INI_MEM, &frame->memory))) {
 		err("frame %d is NOT init", index);
 		ret = EINVAL;
-		goto exit;
+		goto p_err;
 	}
 
 	framemgr_e_barrier_irqs(framemgr, FMGR_IDX_2 + index, flags);
@@ -1820,7 +1830,7 @@ int fimc_is_sensor_buffer_queue(struct fimc_is_device_sensor *device,
 
 	framemgr_x_barrier_irqr(framemgr, FMGR_IDX_2 + index, flags);
 
-exit:
+p_err:
 	return ret;
 }
 
@@ -2030,8 +2040,8 @@ int fimc_is_sensor_front_stop(struct fimc_is_device_sensor *device)
 	if (ret)
 		merr("v4l2_csi_call(s_stream) is fail(%d)", device, ret);
 
-	set_bit(FIMC_IS_SENSOR_BACK_NOWAIT_STOP, &device->state);
 	clear_bit(FIMC_IS_SENSOR_FRONT_START, &device->state);
+	set_bit(FIMC_IS_SENSOR_BACK_NOWAIT_STOP, &device->state);
 
 p_err:
 	minfo("[FRT:D] %s(%d)\n", device, __func__, ret);
@@ -2103,11 +2113,11 @@ int fimc_is_sensor_runtime_suspend(struct device *dev)
 
 	device = (struct fimc_is_device_sensor *)platform_get_drvdata(pdev);
 	if (!device) {
-		merr("device is NULL", device);
-		goto p_err;
+		err("device is NULL");
+		return -EINVAL;
 	}
 
-#if !defined(CONFIG_SOC_EXYNOS5430)
+#if !(defined(CONFIG_SOC_EXYNOS5430) || defined(CONFIG_SOC_EXYNOS5433))
 #if defined(CONFIG_VIDEOBUF2_ION)
 	if (device->mem.alloc_ctx)
 		vb2_ion_detach_iommu(device->mem.alloc_ctx);
@@ -2119,7 +2129,7 @@ int fimc_is_sensor_runtime_suspend(struct device *dev)
 		mwarn("subdev_csi is NULL", device);
 
 	/* gpio uninit */
-	if(device->pdata->is_softlanding == false) {
+	if(device->pdata->is_softlanding == 0) {
 		ret = fimc_is_sensor_gpio_off(device);
 		if (ret)
 			mwarn("fimc_is_sensor_gpio_off is fail(%d)", device, ret);
@@ -2147,7 +2157,6 @@ int fimc_is_sensor_runtime_suspend(struct device *dev)
 	}
 #endif
 
-p_err:
 	info("[SEN:D:%d] %s(%d)\n", device->instance, __func__, ret);
 	return 0;
 }
@@ -2205,7 +2214,7 @@ int fimc_is_sensor_runtime_resume(struct device *dev)
 		goto p_err;
 	}
 
-#if !defined(CONFIG_SOC_EXYNOS5430)
+#if !(defined(CONFIG_SOC_EXYNOS5430) || defined(CONFIG_SOC_EXYNOS5433))
 #if defined(CONFIG_VIDEOBUF2_ION)
 	if (device->mem.alloc_ctx)
 		vb2_ion_attach_iommu(device->mem.alloc_ctx);

@@ -38,8 +38,9 @@
 #include "modem_variation.h"
 #include "modem_utils.h"
 
-#define FMT_WAKE_TIME   (HZ/2)
-#define RAW_WAKE_TIME   (HZ*6)
+#define FMT_WAKE_TIME   (HZ / 2)
+#define RFS_WAKE_TIME   (HZ * 3)
+#define RAW_WAKE_TIME   (HZ * 6)
 
 static struct modem_shared *create_modem_shared_data(void)
 {
@@ -200,28 +201,18 @@ static int attach_devices(struct io_device *iod, enum modem_link tx_link)
 		BUG();
 	}
 
-	switch (iod->format) {
-	case IPC_FMT:
+	switch (iod->id) {
+	case SIPC5_CH_ID_FMT_0 ... SIPC5_CH_ID_FMT_9:
 		wake_lock_init(&iod->wakelock, WAKE_LOCK_SUSPEND, iod->name);
 		iod->waketime = FMT_WAKE_TIME;
 		break;
 
-	case IPC_RAW:
+	case SIPC5_CH_ID_RFS_0 ... SIPC5_CH_ID_RFS_9:
 		wake_lock_init(&iod->wakelock, WAKE_LOCK_SUSPEND, iod->name);
-		iod->waketime = RAW_WAKE_TIME;
+		iod->waketime = RFS_WAKE_TIME;
 		break;
 
-	case IPC_RFS:
-		wake_lock_init(&iod->wakelock, WAKE_LOCK_SUSPEND, iod->name);
-		iod->waketime = RAW_WAKE_TIME;
-		break;
-
-	case IPC_MULTI_RAW:
-		wake_lock_init(&iod->wakelock, WAKE_LOCK_SUSPEND, iod->name);
-		iod->waketime = RAW_WAKE_TIME;
-		break;
-
-	case IPC_BOOT:
+	case SIPC_CH_ID_CS_VT_DATA ... SIPC5_CH_ID_DUMP_9:
 		wake_lock_init(&iod->wakelock, WAKE_LOCK_SUSPEND, iod->name);
 		iod->waketime = RAW_WAKE_TIME;
 		break;

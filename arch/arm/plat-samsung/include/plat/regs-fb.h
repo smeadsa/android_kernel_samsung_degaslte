@@ -247,7 +247,11 @@
 #define CRCCTRL_CRCEN
 
 /* WINCONx */
-#define WINCONx_SHADOW_MASK			(0x4780FE)
+#if defined(CONFIG_FB_I80_COMMAND_MODE)
+#define WINCONx_SHADOW_MASK			(0x4780FF)
+#else
+#define WINCONx_SHADOW_MASK			(0x4780FE)  /*VIDEO MODE*/
+#endif
 #define WINCONx_BITSWP				(1 << 18)
 #define WINCONx_BYTSWP				(1 << 17)
 #define WINCONx_HAWSWP				(1 << 16)

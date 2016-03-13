@@ -30,9 +30,13 @@ int fimc_is_clk_gate_init(struct fimc_is_core *core)
 	spin_lock_init(&gate_ctrl->lock);
 	core->resourcemgr.clk_gate_ctrl.gate_info = core->pdata->gate_info;
 
-	/* Do not initialize clock gating region for debug(ISSR53).
-	* Because this region is initialize by A5.
-	*/
+	/* ISSR53 is clock gating debugging region.
+	 * High means clock on state.
+	 * To prevent telling A5 wrong clock off state,
+	 * clock on state should be set before clock off is set.
+	 */
+	writel(0xFFFFFFFF, core->ischain[0].interface->regs + ISSR53);
+
 	return 0;
 }
 

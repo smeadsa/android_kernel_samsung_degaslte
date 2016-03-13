@@ -422,7 +422,7 @@ int fimc_prepare_addr(struct fimc_ctx *ctx, struct vb2_buffer *vb,
 	if (vb == NULL || frame == NULL)
 		return -EINVAL;
 
-	pix_size = frame->width * frame->height;
+	pix_size = frame->f_width * frame->f_height;
 
 	dbg("memplanes= %d, colplanes= %d, pix_size= %d",
 		frame->fmt->memplanes, frame->fmt->colplanes, pix_size);
@@ -1120,7 +1120,6 @@ int fimc_runtime_resume(struct device *dev)
 	/* Enable clocks and perform basic initalization */
 	clk_enable(fimc->clock[CLK_GATE]);
 	fimc->vb2->resume(fimc->alloc_ctx);
-	fimc_hw_reset(fimc);
 
 	/* Resume the capture or mem-to-mem device */
 	if (fimc_capture_busy(fimc))
@@ -1181,7 +1180,6 @@ static int fimc_resume(struct device *dev)
 		spin_unlock_irqrestore(&fimc->slock, flags);
 		return 0;
 	}
-	fimc_hw_reset(fimc);
 	spin_unlock_irqrestore(&fimc->slock, flags);
 
 	if (fimc_capture_busy(fimc))
