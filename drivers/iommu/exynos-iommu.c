@@ -939,7 +939,7 @@ static enum exynos_sysmmu_inttype find_fault_information(
 			struct sysmmu_drvdata *drvdata, int idx,
 			unsigned long *fault_addr)
 {
-	unsigned int maj, min;
+	unsigned int maj, min = 0;
 	unsigned long base = 0;
 	unsigned int itype;
 	unsigned int info = 0;
@@ -2172,7 +2172,7 @@ static int debug_sysmmu_list_show(struct seq_file *s, void *unused)
 {
 	struct sysmmu_drvdata *drvdata = s->private;
 	struct platform_device *pdev = to_platform_device(drvdata->sysmmu);
-	int idx, maj, min, ret;
+	int idx, maj, min = 0, ret;
 
 	seq_printf(s, "SysMMU Name | Ver | SFR Base\n");
 
